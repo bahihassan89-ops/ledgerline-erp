@@ -29,6 +29,9 @@ ACCOUNT_TYPES = {
     "inventory": AccountClass.ASSET,
     "prepayment": AccountClass.ASSET,
     "tax_input": AccountClass.ASSET,
+    "wht_receivable": AccountClass.ASSET,      # taxes withheld by customers (credit against income tax)
+    "notes_receivable": AccountClass.ASSET,    # cheques received, not yet cleared (أوراق القبض)
+    "wip": AccountClass.ASSET,                 # work in progress (إنتاج تحت التشغيل)
     "fixed_asset": AccountClass.ASSET,
     "accumulated_depreciation": AccountClass.ASSET,  # contra-asset (credit balance)
     "non_current_asset": AccountClass.ASSET,
@@ -36,6 +39,8 @@ ACCOUNT_TYPES = {
     "current_liability": AccountClass.LIABILITY,
     "tax_output": AccountClass.LIABILITY,
     "grni": AccountClass.LIABILITY,
+    "wht_payable": AccountClass.LIABILITY,     # tax withheld from vendors, due to the Tax Authority
+    "notes_payable": AccountClass.LIABILITY,   # cheques issued, not yet cleared (أوراق الدفع)
     "non_current_liability": AccountClass.LIABILITY,
     "equity": AccountClass.EQUITY,
     "retained_earnings": AccountClass.EQUITY,
@@ -54,7 +59,12 @@ PL_CLASSES = {AccountClass.INCOME, AccountClass.EXPENSE}
 class Account(CompanyScoped):
     code = models.CharField(max_length=20)
     name = models.CharField(max_length=200)
+    name_ar = models.CharField(max_length=200, blank=True)
     parent = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="children")
+    # Cash-flow statement classification; empty = derived from the account type.
+    cash_flow_category = models.CharField(max_length=10, blank=True, choices=[
+        ("operating", "Operating"), ("investing", "Investing"), ("financing", "Financing"), ("cash", "Cash"),
+        ("none", "Excluded")])
     account_class = models.CharField(max_length=12, choices=AccountClass.choices)
     account_type = models.CharField(max_length=30, choices=AccountType.choices)
     level = models.PositiveSmallIntegerField(default=1, editable=False)
@@ -212,10 +222,21 @@ class Tax(CompanyScoped):
         SALE = "sale", "Sales"
         PURCHASE = "purchase", "Purchases"
 
+    class Kind(models.TextChoices):
+        VAT = "vat", "VAT (added to the price)"
+        WITHHOLDING = "withholding", "Withholding tax (deducted from the amount due)"
+
     code = models.CharField(max_length=20)
     name = models.CharField(max_length=120)
+    name_ar = models.CharField(max_length=120, blank=True)
     scope = models.CharField(max_length=10, choices=Scope.choices)
-    rate = models.DecimalField(max_digits=7, decimal_places=4, help_text="Percent, e.g. 15 for 15%")
+    kind = models.CharField(max_length=12, choices=Kind.choices, default=Kind.VAT)
+    rate = models.DecimalField(max_digits=7, decimal_places=4, help_text="Percent, e.g. 14 for 14%")
+    # Egyptian Tax Authority e-invoice codes, e.g. T1/V009 (VAT general), T4/W004 (WHT services)
+    eta_type = models.CharField(max_length=4, blank=True)
+    eta_subtype = models.CharField(max_length=10, blank=True)
+    # Withholding applies only when the document's untaxed amount (base currency) reaches this value.
+    min_base = models.DecimalField(max_digits=20, decimal_places=2, default=Decimal("0"))
     price_include = models.BooleanField(default=False)
     account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name="+")
     active = models.BooleanField(default=True)
@@ -239,6 +260,20 @@ class AccountingSettings(models.Model):
     fx_gain_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
     fx_loss_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
     retained_earnings_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
+    opening_equity_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
+    cheques_receivable_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
+    cheques_payable_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
+    unrealized_fx_gain_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
+    unrealized_fx_loss_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
+    asset_disposal_gain_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
+    asset_disposal_loss_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
+    landed_cost_clearing_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
+    wip_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
+    labour_absorbed_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
+    overhead_absorbed_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
+    production_scrap_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
+    depreciation_journal = models.ForeignKey(Journal, null=True, on_delete=models.PROTECT, related_name="+")
+    opening_journal = models.ForeignKey(Journal, null=True, on_delete=models.PROTECT, related_name="+")
     sales_journal = models.ForeignKey(Journal, null=True, on_delete=models.PROTECT, related_name="+")
     purchase_journal = models.ForeignKey(Journal, null=True, on_delete=models.PROTECT, related_name="+")
     inventory_journal = models.ForeignKey(Journal, null=True, on_delete=models.PROTECT, related_name="+")
@@ -279,6 +314,8 @@ class JournalEntry(CompanyScoped):
     reversal_of = models.OneToOneField("self", null=True, blank=True, on_delete=models.PROTECT,
                                        related_name="reversed_by")
     is_closing = models.BooleanField(default=False)
+    # Accruals: when set, posting also posts the reversal on this date.
+    auto_reverse_date = models.DateField(null=True, blank=True)
 
     class Meta:
         ordering = ["-date", "-id"]

@@ -45,6 +45,11 @@ class ProductType(models.TextChoices):
 class Product(CompanyScoped):
     sku = models.CharField(max_length=60)
     name = models.CharField(max_length=200)
+    name_ar = models.CharField(max_length=200, blank=True)
+    # ETA item coding: GS1 barcode or EGS internal code registered on the ETA portal (e.g. EG-123456789-SKU1)
+    eta_item_type = models.CharField(max_length=3, default="EGS", choices=[("EGS", "EGS"), ("GS1", "GS1")])
+    eta_item_code = models.CharField(max_length=100, blank=True)
+    eta_unit_type = models.CharField(max_length=10, default="EA", help_text="ETA unit code, e.g. EA, KGM, LTR, MTR")
     barcode = models.CharField(max_length=60, blank=True)
     type = models.CharField(max_length=12, choices=ProductType.choices, default=ProductType.STOCK)
     category = models.ForeignKey(ProductCategory, on_delete=models.PROTECT, related_name="products")
@@ -129,9 +134,12 @@ class MoveType(models.TextChoices):
     OPENING = "opening", "Opening stock"
     TRANSFER_IN = "transfer_in", "Transfer in"
     TRANSFER_OUT = "transfer_out", "Transfer out"
+    PRODUCTION_CONSUME = "production_consume", "Consumed in production"
+    PRODUCTION_OUTPUT = "production_output", "Produced (finished goods)"
 
 
-INBOUND = {MoveType.RECEIPT, MoveType.ADJUST_IN, MoveType.CUSTOMER_RETURN, MoveType.OPENING, MoveType.TRANSFER_IN}
+INBOUND = {MoveType.RECEIPT, MoveType.ADJUST_IN, MoveType.CUSTOMER_RETURN, MoveType.OPENING, MoveType.TRANSFER_IN,
+           MoveType.PRODUCTION_OUTPUT}
 
 
 class StockMove(CompanyScoped):
@@ -149,6 +157,8 @@ class StockMove(CompanyScoped):
                                       on_delete=models.PROTECT, related_name="moves")
     sales_line = models.ForeignKey("sales.SalesOrderLine", null=True, blank=True, on_delete=models.PROTECT,
                                    related_name="moves")
+    manufacturing_order = models.ForeignKey("manufacturing.ManufacturingOrder", null=True, blank=True,
+                                            on_delete=models.PROTECT, related_name="moves")
     journal_entry = models.ForeignKey("ledger.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
                                       related_name="+")
 
@@ -179,3 +189,28 @@ class CostLayer(models.Model):
     class Meta:
         ordering = ["date", "id"]
         constraints = [models.CheckConstraint(condition=Q(remaining_qty__gte=0), name="layer_remaining_non_negative")]
+
+
+class LandedCost(CompanyScoped):
+    """Customs duties, freight, clearance and insurance capitalised into the cost of received goods
+    (EAS 2 / IAS 2). The service bills are posted to the Landed Costs Clearing account; this document
+    moves that amount into inventory (and COGS for any part already sold)."""
+    number = models.CharField(max_length=40, blank=True)
+    date = models.DateField()
+    description = models.CharField(max_length=255)
+    amount = models.DecimalField(**MONEY)  # base currency
+    allocation = models.CharField(max_length=10, default="value", choices=[("value", "By value"),
+                                                                          ("quantity", "By quantity")])
+    counter_account = models.ForeignKey("ledger.Account", null=True, blank=True, on_delete=models.PROTECT,
+                                        related_name="+", help_text="Default: Landed Costs Clearing")
+    moves = models.ManyToManyField(StockMove, related_name="landed_costs")
+    state = models.CharField(max_length=10, default="draft", choices=[("draft", "Draft"), ("posted", "Posted")])
+    journal_entry = models.ForeignKey("ledger.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+                                      related_name="+")
+
+    class Meta:
+        ordering = ["-date", "-id"]
+        constraints = [models.CheckConstraint(condition=Q(amount__gt=0), name="landed_cost_positive")]
+
+    def __str__(self):
+        return self.number or f"Landed cost #{self.pk}"

@@ -47,7 +47,8 @@ class Invoice(CompanyScoped):
     payment_state = models.CharField(max_length=10, choices=PaymentState.choices, default=PaymentState.NOT_PAID)
     amount_untaxed = models.DecimalField(**MONEY)
     amount_tax = models.DecimalField(**MONEY)
-    amount_total = models.DecimalField(**MONEY)
+    amount_wht = models.DecimalField(**MONEY)  # withholding tax deducted (Egypt WHT)
+    amount_total = models.DecimalField(**MONEY)  # = untaxed + VAT - WHT (what the partner pays / is paid)
     amount_total_base = models.DecimalField(**MONEY)
     amount_residual = models.DecimalField(**MONEY)  # still due, document currency
     journal_entry = models.OneToOneField("ledger.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
@@ -59,6 +60,10 @@ class Invoice(CompanyScoped):
     purchase_order = models.ForeignKey("purchasing.PurchaseOrder", null=True, blank=True, on_delete=models.PROTECT,
                                        related_name="bills")
     notes = models.TextField(blank=True)
+    # Credit/debit notes for goods physically returned: stock moves are created when posted.
+    return_to_stock = models.BooleanField(default=False)
+    # Imported open item from the previous system (go-live). Not e-invoiced, no 3-way match.
+    is_opening = models.BooleanField(default=False)
     posted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT,
                                   related_name="+")
     posted_at = models.DateTimeField(null=True, blank=True)
@@ -96,8 +101,11 @@ class InvoiceLine(models.Model):
     unit_price = models.DecimalField(max_digits=20, decimal_places=6, default=Decimal("0"))
     discount_pct = models.DecimalField(max_digits=6, decimal_places=3, default=Decimal("0"))
     tax = models.ForeignKey("ledger.Tax", null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+    withholding_tax = models.ForeignKey("ledger.Tax", null=True, blank=True, on_delete=models.PROTECT,
+                                        related_name="+")
     subtotal = models.DecimalField(**MONEY)   # untaxed, after discount, document currency
     tax_amount = models.DecimalField(**MONEY)
+    wht_amount = models.DecimalField(**MONEY)
     total = models.DecimalField(**MONEY)
     cost_center = models.ForeignKey(CostCenter, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
     sales_line = models.ForeignKey("sales.SalesOrderLine", null=True, blank=True, on_delete=models.PROTECT,
@@ -130,6 +138,17 @@ class Payment(CompanyScoped):
     rate = models.DecimalField(**RATE, default=Decimal("1"))
     reference = models.CharField(max_length=120, blank=True, help_text="Cheque / transfer reference")
     memo = models.CharField(max_length=255, blank=True)
+    # Cheques (أوراق قبض / أوراق دفع): posted to the cheques account until the bank clears them.
+    method = models.CharField(max_length=10, default="transfer", choices=[
+        ("transfer", "Bank transfer"), ("cash", "Cash"), ("cheque", "Cheque")])
+    cheque_number = models.CharField(max_length=40, blank=True)
+    cheque_bank = models.CharField(max_length=120, blank=True, help_text="Drawee bank")
+    cheque_due_date = models.DateField(null=True, blank=True)
+    cheque_state = models.CharField(max_length=12, blank=True, choices=[
+        ("in_hand", "In hand (received)"), ("deposited", "Deposited for collection"), ("issued", "Issued to vendor"),
+        ("cleared", "Cleared"), ("bounced", "Bounced / cancelled")])
+    cheque_cleared_entry = models.ForeignKey("ledger.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
+                                             related_name="+")
     state = models.CharField(max_length=12, choices=DocState.choices, default=DocState.DRAFT, db_index=True)
     amount_unallocated = models.DecimalField(**MONEY)
     journal_entry = models.OneToOneField("ledger.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,

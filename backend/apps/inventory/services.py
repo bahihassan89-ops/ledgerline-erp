@@ -66,7 +66,8 @@ def _post(company, move, debit_acc, credit_acc, user, partner=None, description=
 
 @transaction.atomic
 def receive(company, product, warehouse, qty, unit_cost, on_date, user, *, counter_account,
-            move_type=MoveType.RECEIPT, partner=None, reference="", purchase_line=None, sales_line=None):
+            move_type=MoveType.RECEIPT, partner=None, reference="", purchase_line=None, sales_line=None,
+            manufacturing_order=None):
     """Bring stock in at `unit_cost` (base currency). Credits `counter_account`."""
     _check(company, product, warehouse, qty)
     if move_type not in INBOUND:
@@ -80,7 +81,8 @@ def receive(company, product, warehouse, qty, unit_cost, on_date, user, *, count
     move = StockMove.objects.create(
         company=company, number=_number(company, on_date, True), date=on_date, move_type=move_type,
         product=product, warehouse=warehouse, quantity=qty, unit_cost=unit_cost, value=value, partner=partner,
-        reference=reference, purchase_line=purchase_line, sales_line=sales_line, created_by=user)
+        reference=reference, purchase_line=purchase_line, sales_line=sales_line,
+        manufacturing_order=manufacturing_order, created_by=user)
     CostLayer.objects.create(company=company, product=product, move=move, date=on_date, quantity=qty,
                              unit_cost=unit_cost, value=value, remaining_qty=qty, remaining_value=value)
     val.quantity += qty
@@ -96,7 +98,8 @@ def receive(company, product, warehouse, qty, unit_cost, on_date, user, *, count
 
 @transaction.atomic
 def issue(company, product, warehouse, qty, on_date, user, *, counter_account,
-          move_type=MoveType.DELIVERY, partner=None, reference="", sales_line=None, purchase_line=None):
+          move_type=MoveType.DELIVERY, partner=None, reference="", sales_line=None, purchase_line=None,
+          manufacturing_order=None):
     """Take stock out, costed by the product's method. Debits `counter_account` (e.g. COGS)."""
     _check(company, product, warehouse, qty)
     if move_type in INBOUND:
@@ -140,7 +143,8 @@ def issue(company, product, warehouse, qty, on_date, user, *, counter_account,
     move = StockMove.objects.create(
         company=company, number=_number(company, on_date, False), date=on_date, move_type=move_type,
         product=product, warehouse=warehouse, quantity=qty, unit_cost=unit_cost, value=value, partner=partner,
-        reference=reference, sales_line=sales_line, purchase_line=purchase_line, created_by=user)
+        reference=reference, sales_line=sales_line, purchase_line=purchase_line,
+        manufacturing_order=manufacturing_order, created_by=user)
     _post(company, move, counter_account, _inventory_account(product), user, partner)
     audit.record("stock_out", move, {"product": product.sku, "qty": qty, "value": value})
     _emit(company, move)
@@ -211,3 +215,60 @@ def valuation_report(company):
                      "quantity": str(v.quantity), "average_cost": str(round_to(v.average_cost, 4)),
                      "value": str(v.value)})
     return {"rows": rows, "total_value": str(total)}
+
+
+@transaction.atomic
+def post_landed_cost(lc, user):
+    """Allocate the landed cost over the selected receipts. The share of goods still on hand goes to
+    Inventory (raising the cost layers / average), the share already sold goes straight to COGS."""
+    from .models import LandedCost
+    lc = LandedCost.objects.select_for_update().get(pk=lc.pk)
+    company = lc.company
+    if lc.state != "draft":
+        raise BusinessError("Landed cost already posted.", "invalid_state")
+    moves = list(lc.moves.select_related("product", "product__category"))
+    if not moves:
+        raise BusinessError("Select the receipts the cost relates to.", "no_moves")
+    for m in moves:
+        if m.company_id != company.pk or m.move_type not in (MoveType.RECEIPT, MoveType.OPENING):
+            raise BusinessError(f"{m}: only goods receipts can carry landed costs.", "invalid_move")
+    decimals = gl.base_decimals(company)
+    basis = [(m.value if lc.allocation == "value" else m.quantity) for m in moves]
+    total_basis = sum(basis, ZERO)
+    if not total_basis:
+        raise BusinessError("Selected receipts have no value/quantity to allocate on.", "zero_basis")
+    counter = lc.counter_account or gl.require_account(gl.settings_for(company).landed_cost_clearing_account,
+                                                       "landed costs clearing")
+    specs, allocated = [], ZERO
+    for i, (m, b) in enumerate(zip(moves, basis)):
+        share = lc.amount - allocated if i == len(moves) - 1 else round_to(lc.amount * b / total_basis, decimals)
+        allocated += share
+        val = _lock_valuation(company, m.product)
+        layer = CostLayer.objects.select_for_update().get(move=m)
+        if m.product.category.cost_method == CostMethod.FIFO:
+            ratio = layer.remaining_qty / layer.quantity
+        else:
+            ratio = min(Decimal(1), val.quantity / m.quantity) if m.quantity else ZERO
+        on_hand = round_to(share * ratio, decimals)
+        sold = share - on_hand
+        layer.value += share
+        if m.product.category.cost_method == CostMethod.FIFO:
+            layer.remaining_value += on_hand
+        layer.save(update_fields=["value", "remaining_value"])
+        val.value += on_hand
+        val.save(update_fields=["value"])
+        if on_hand:
+            specs.append(gl.LineSpec(account=_inventory_account(m.product), debit=on_hand, product=m.product,
+                                     description=f"Landed cost {m.product.sku} ({m.number})"))
+        if sold:
+            specs.append(gl.LineSpec(account=gl.require_account(m.product.category.cogs_account, "COGS"), debit=sold,
+                                     product=m.product, description=f"Landed cost on goods already sold {m.product.sku}"))
+    specs.append(gl.LineSpec(account=counter, credit=lc.amount, description=lc.description))
+    lc.number = Sequence.next_number(company, "doc:LC", lc.date.year, "LC")
+    entry = gl.create_entry(company, gl.journal_for(company, "inventory_journal", "inventory"), lc.date, specs,
+                            user=user, reference=lc.number, narration=lc.description, source=("landed_cost", lc.pk))
+    gl.post_entry(entry, user, allow_control=True)
+    lc.state, lc.journal_entry = "posted", entry
+    lc.save()
+    audit.record("post", lc, {"amount": lc.amount, "moves": [m.number for m in moves]})
+    return lc

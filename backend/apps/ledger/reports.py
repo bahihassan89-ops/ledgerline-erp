@@ -161,3 +161,86 @@ def income_statement(company, date_from, date_to, max_level=None):
     return {"date_from": date_from, "date_to": date_to, "sections": sections,
             "revenue": str(revenue), "cost_of_sales": str(cogs), "gross_profit": str(revenue - cogs),
             "total_income": str(income), "total_expense": str(expense), "net_profit": str(income - expense)}
+
+
+CF_DEFAULT = {
+    "cash": "cash", "bank": "cash",
+    "fixed_asset": "investing", "non_current_asset": "investing",
+    "non_current_liability": "financing", "equity": "financing",
+    "retained_earnings": "none", "accumulated_depreciation": "operating",
+}
+CF_LABELS = {
+    "receivable": "(Increase) / decrease in trade receivables",
+    "notes_receivable": "(Increase) / decrease in notes receivable",
+    "inventory": "(Increase) / decrease in inventories", "wip": "(Increase) / decrease in work in progress",
+    "prepayment": "(Increase) / decrease in prepayments", "current_asset": "(Increase) / decrease in other receivables",
+    "tax_input": "(Increase) / decrease in input VAT", "wht_receivable": "(Increase) / decrease in taxes withheld by customers",
+    "payable": "Increase / (decrease) in trade payables", "notes_payable": "Increase / (decrease) in notes payable",
+    "grni": "Increase / (decrease) in goods received not invoiced",
+    "current_liability": "Increase / (decrease) in accruals and other payables",
+    "tax_output": "Increase / (decrease) in output VAT", "wht_payable": "Increase / (decrease) in withholding tax payable",
+    "accumulated_depreciation": "Depreciation and amortisation",
+    "fixed_asset": "Purchase / disposal of property, plant and equipment",
+    "non_current_asset": "Purchase / disposal of intangible and other non-current assets",
+    "non_current_liability": "Proceeds / (repayment) of long-term borrowings",
+    "equity": "Capital contributed / (withdrawn)",
+}
+
+
+def cash_flow(company, date_from, date_to):
+    """Indirect method (EAS 4 / IAS 7). Built from balance movements of every non-cash account, so it
+    always reconciles to the actual change in cash. Closing entries are ignored (net profit is shown
+    instead of its transfer to retained earnings)."""
+    from collections import defaultdict
+    qs = (JournalLine.objects.filter(company=company, posted=True, date__gte=date_from, date__lte=date_to,
+                                     entry__is_closing=False)
+          .values("account__account_type", "account__account_class", "account__cash_flow_category", "account__code",
+                  "account__name").annotate(d=Sum("debit"), c=Sum("credit")))
+    net_profit = ZERO
+    sections = defaultdict(lambda: defaultdict(lambda: ZERO))
+    cash_change = ZERO
+    for r in qs:
+        move = (r["d"] or ZERO) - (r["c"] or ZERO)  # + = debit movement
+        if r["account__account_class"] in PL_CLASSES:
+            net_profit -= move
+            continue
+        cat = r["account__cash_flow_category"] or CF_DEFAULT.get(r["account__account_type"], "operating")
+        if cat == "cash":
+            cash_change += move
+            continue
+        if cat == "none":
+            continue
+        label = CF_LABELS.get(r["account__account_type"], r["account__name"])
+        sections[cat][label] += -move  # a debit movement in a non-cash account is a use of cash
+    def sec(name):
+        rows = [{"label": k, "amount": str(v)} for k, v in sections[name].items() if v]
+        return rows, sum(sections[name].values(), ZERO)
+    op_rows, op_total = sec("operating")
+    inv_rows, inv_total = sec("investing")
+    fin_rows, fin_total = sec("financing")
+    operating = net_profit + op_total
+    computed = operating + inv_total + fin_total
+    opening_cash = JournalLine.objects.filter(company=company, posted=True, date__lt=date_from,
+                                              account__account_type__in=["cash", "bank"]).aggregate(
+        d=Sum("debit"), c=Sum("credit"))
+    oc = (opening_cash["d"] or ZERO) - (opening_cash["c"] or ZERO)
+    return {"date_from": date_from, "date_to": date_to, "net_profit": str(net_profit),
+            "operating": {"rows": op_rows, "total": str(operating)},
+            "investing": {"rows": inv_rows, "total": str(inv_total)},
+            "financing": {"rows": fin_rows, "total": str(fin_total)},
+            "net_change": str(computed), "opening_cash": str(oc), "closing_cash": str(oc + cash_change),
+            "actual_cash_change": str(cash_change), "reconciled": computed == cash_change}
+
+
+def comparative(fn, company, current, previous, **kw):
+    """Run a statement for two periods and attach `previous` amounts to every row (by account)."""
+    cur, prev = fn(company, *current, **kw), fn(company, *previous, **kw)
+    index = {}
+    for s in prev.get("sections", []):
+        for r in s["rows"]:
+            index[r["account_id"]] = r["amount"]
+    for s in cur.get("sections", []):
+        for r in s["rows"]:
+            r["previous"] = index.get(r["account_id"], "0")
+    cur["previous"] = {k: v for k, v in prev.items() if k != "sections"}
+    return cur

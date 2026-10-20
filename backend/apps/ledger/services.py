@@ -269,6 +269,11 @@ def post_entry(entry, user, *, allow_control=False, closing=False) -> JournalEnt
     from apps.integrations.events import emit
     emit(company, "journal_entry.posted", {"id": entry.pk, "number": entry.number, "date": entry.date,
                                            "total": total_debit, "source_type": entry.source_type})
+    if entry.auto_reverse_date and not entry.reversal_of_id:
+        if entry.auto_reverse_date <= entry.date:
+            raise BusinessError("The auto-reversal date must be after the entry date.", "invalid_reverse_date")
+        reverse_entry(entry, user, entry.auto_reverse_date, f"Automatic reversal of accrual {entry.number}",
+                      allow_source=True)
     return entry
 
 

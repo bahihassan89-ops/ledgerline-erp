@@ -45,10 +45,12 @@ class Currency(models.Model):
 
 class Company(TimeStamped):
     name = models.CharField(max_length=200)
+    name_ar = models.CharField(max_length=200, blank=True)
     legal_name = models.CharField(max_length=255, blank=True)
     code = models.SlugField(max_length=20, unique=True)
     tax_number = models.CharField(max_length=50, blank=True, help_text="VAT / TRN / tax registration number")
-    registration_number = models.CharField(max_length=50, blank=True)
+    registration_number = models.CharField(max_length=50, blank=True, help_text="Commercial registry (السجل التجاري)")
+    tax_office = models.CharField(max_length=120, blank=True, help_text="مأمورية الضرائب")
     base_currency = models.ForeignKey(Currency, on_delete=models.PROTECT, related_name="+")
     country = models.CharField(max_length=2, blank=True)
     address = models.TextField(blank=True)
@@ -194,3 +196,28 @@ class AuditLog(models.Model):
                 return False, row.id
             prev = row.hash
         return True, None
+
+
+def _attachment_path(instance, filename):
+    import uuid
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
+    return f"attachments/{instance.company_id}/{uuid.uuid4().hex}.{ext}"
+
+
+class Attachment(models.Model):
+    """Supporting documents (supplier invoice scans, contracts, customs declarations, bank advices).
+    Files are only served through the authenticated API; attachments of posted documents cannot be deleted."""
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="+")
+    object_type = models.CharField(max_length=60, db_index=True)
+    object_id = models.BigIntegerField(db_index=True)
+    file = models.FileField(upload_to=_attachment_path)
+    original_name = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=100)
+    size = models.PositiveIntegerField()
+    sha256 = models.CharField(max_length=64)
+    description = models.CharField(max_length=255, blank=True)
+    uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="+")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-uploaded_at"]

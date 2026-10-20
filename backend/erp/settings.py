@@ -52,6 +52,11 @@ INSTALLED_APPS = [
     "apps.purchasing",
     "apps.approvals",
     "apps.integrations",
+    "apps.assets",
+    "apps.einvoice",
+    "apps.banking",
+    "apps.planning",
+    "apps.manufacturing",
 ]
 
 MIDDLEWARE = [
@@ -117,6 +122,8 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+MEDIA_ROOT = Path(env("ERP_MEDIA_ROOT", str(BASE_DIR / "media")))
+ERP_MAX_UPLOAD_MB = int(env("ERP_MAX_UPLOAD_MB", "10"))
 STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -185,6 +192,7 @@ X_FRAME_OPTIONS = "DENY"
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = "same-origin"
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 
 if ERP_ENV == "prod":
     SECURE_SSL_REDIRECT = env_bool("ERP_SSL_REDIRECT", True)
