@@ -112,7 +112,7 @@ def create_bill(order, user, on_date=None, vendor_reference=""):
         InvoiceLine.objects.create(invoice=bill, sequence=n, product=ln.product,
                                    description=ln.description or ln.product.name, account=acc, quantity=qty,
                                    unit_price=ln.unit_price, discount_pct=ln.discount_pct, tax=ln.tax,
-                                   purchase_line=ln)
+                                   purchase_line=ln, withholding_tax=order.partner.withholding_tax)
         n += 1
     if not n:
         raise BusinessError("Nothing to bill: receive goods/services first.", "nothing_to_bill")

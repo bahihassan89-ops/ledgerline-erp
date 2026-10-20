@@ -128,7 +128,8 @@ def create_invoice(order, user, on_date=None):
         acc = gl.require_account(ln.product.account("income"), f"income for {ln.product.sku}")
         InvoiceLine.objects.create(invoice=inv, sequence=n, product=ln.product,
                                    description=ln.description or ln.product.name, account=acc, quantity=qty,
-                                   unit_price=ln.unit_price, discount_pct=ln.discount_pct, tax=ln.tax, sales_line=ln)
+                                   unit_price=ln.unit_price, discount_pct=ln.discount_pct, tax=ln.tax, sales_line=ln,
+                                   withholding_tax=order.partner.withholding_tax)
         n += 1
     if not n:
         raise BusinessError("Nothing to invoice: deliver goods/services first.", "nothing_to_invoice")

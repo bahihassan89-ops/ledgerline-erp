@@ -49,8 +49,21 @@ class _InvoiceBase(CompanyViewSet):
 
     @action(detail=True, methods=["post"])
     def refund(self, request, pk=None):
-        ref = services.create_refund(self.get_object(), request.user, reason=request.data.get("reason", ""))
+        ref = services.create_refund(self.get_object(), request.user, reason=request.data.get("reason", ""),
+                                     return_to_stock=bool(request.data.get("return_to_stock")))
         return Response(self.get_serializer(ref).data, status=201)
+
+    @action(detail=True, methods=["post"], url_path="debit-note")
+    def debit_note(self, request, pk=None):
+        """Additional charge to the customer referencing a posted invoice (ETA document type D)."""
+        origin = self.get_object()
+        if origin.move_type != InvoiceType.OUT_INVOICE or origin.state != DocState.POSTED:
+            raise BusinessError("Debit notes reference a posted customer invoice.", "invalid_state")
+        dn = Invoice.objects.create(company=self.company, move_type=InvoiceType.OUT_INVOICE, partner=origin.partner,
+                                    date=timezone.localdate(), currency=origin.currency, origin_invoice=origin,
+                                    reference=f"Debit note to {origin.number}", created_by=request.user,
+                                    notes=request.data.get("reason", ""))
+        return Response(self.get_serializer(dn).data, status=201)
 
     @action(detail=True, methods=["post"], url_path="register-payment")
     def register_payment(self, request, pk=None):
@@ -66,7 +79,9 @@ class _InvoiceBase(CompanyViewSet):
             company=self.company, direction="inbound" if receiving else "outbound", partner=inv.partner,
             journal=journal, date=parse_date(request.data.get("date"), timezone.localdate()), amount=amount,
             currency=inv.currency, rate=D(request.data.get("rate") or 1), reference=request.data.get("reference", ""),
-            memo=f"Payment of {inv.number}", created_by=request.user)
+            memo=f"Payment of {inv.number}", created_by=request.user, method=request.data.get("method", "transfer"),
+            cheque_number=request.data.get("cheque_number", ""), cheque_bank=request.data.get("cheque_bank", ""),
+            cheque_due_date=parse_date(request.data.get("cheque_due_date")))
         pay = services.post_payment(pay, request.user, allocations=[(inv, min(amount, inv.amount_residual))])
         inv.refresh_from_db()
         return Response({"payment": PaymentSerializer(pay).data, "invoice": self.get_serializer(inv).data})
@@ -76,7 +91,8 @@ class CustomerInvoiceViewSet(_InvoiceBase):
     types = (InvoiceType.OUT_INVOICE, InvoiceType.OUT_REFUND)
     perms = {"list": "billing.invoice.view", "create": "billing.invoice.create", "update": "billing.invoice.create",
              "destroy": "billing.invoice.create", "post": "billing.invoice.post", "cancel": "billing.invoice.cancel",
-             "refund": "billing.invoice.cancel", "register_payment": "billing.payment.post"}
+             "refund": "billing.invoice.cancel", "register_payment": "billing.payment.post",
+             "debit_note": "billing.invoice.create"}
 
 
 class VendorBillViewSet(_InvoiceBase):
@@ -97,7 +113,9 @@ class PaymentViewSet(CompanyViewSet):
     serializer_class = PaymentSerializer
     perms = {"list": "billing.payment.view", "create": "billing.payment.create", "update": "billing.payment.create",
              "destroy": "billing.payment.create", "post": "billing.payment.post", "cancel": "billing.payment.post",
-             "allocate": "billing.payment.post", "unallocate": "billing.payment.post"}
+             "allocate": "billing.payment.post", "unallocate": "billing.payment.post",
+             "cheque_deposit": "billing.cheque.manage", "cheque_clear": "billing.cheque.manage",
+             "cheque_bounce": "billing.cheque.manage", "cheques": "billing.payment.view"}
     filterset_fields = {"state": ["exact"], "direction": ["exact"], "partner": ["exact"], "date": ["gte", "lte"]}
     search_fields = ["number", "reference", "partner__name"]
 
@@ -141,3 +159,23 @@ class PaymentViewSet(CompanyViewSet):
     def cancel(self, request, pk=None):
         pay = services.cancel_payment(self.get_object(), request.user, request.data.get("reason", ""))
         return Response(self.get_serializer(pay).data)
+
+    @action(detail=True, methods=["post"], url_path="cheque-deposit")
+    def cheque_deposit(self, request, pk=None):
+        return Response(self.get_serializer(services.cheque_deposit(self.get_object(), request.user)).data)
+
+    @action(detail=True, methods=["post"], url_path="cheque-clear")
+    def cheque_clear(self, request, pk=None):
+        pay = services.cheque_clear(self.get_object(), request.user,
+                                    parse_date(request.data.get("date"), timezone.localdate()))
+        return Response(self.get_serializer(pay).data)
+
+    @action(detail=True, methods=["post"], url_path="cheque-bounce")
+    def cheque_bounce(self, request, pk=None):
+        pay = services.cheque_bounce(self.get_object(), request.user, request.data.get("reason", ""))
+        return Response(self.get_serializer(pay).data)
+
+    @action(detail=False)
+    def cheques(self, request):
+        return Response(services.cheque_register(self.company, request.query_params.get("direction"),
+                                                 request.query_params.get("state")))

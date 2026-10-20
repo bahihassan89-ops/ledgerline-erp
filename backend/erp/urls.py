@@ -19,6 +19,14 @@ from apps.ledger.views import (AccountingSettingsView, AccountViewSet, FiscalPer
 from apps.partners.views import PartnerViewSet, PaymentTermViewSet
 from apps.purchasing.views import PurchaseOrderViewSet
 from apps.sales.views import SalesOrderViewSet
+from apps.assets.api import AssetCategoryViewSet, AssetViewSet
+from apps.banking.api import BankStatementViewSet
+from apps.core.attachments import AttachmentViewSet
+from apps.einvoice.api import EtaDocumentViewSet, EtaSettingsView
+from apps.inventory.views import LandedCostViewSet
+from apps.ledger.period_views import ChecklistView, ImportView, RevaluationView
+from apps.manufacturing.api import BomViewSet, ManufacturingOrderViewSet, WorkCenterViewSet
+from apps.planning.api import BudgetViewSet, RecurringViewSet
 
 r = DefaultRouter()
 r.register("currencies", CurrencyViewSet, basename="currency")
@@ -51,6 +59,17 @@ r.register("approval-requests", ApprovalRequestViewSet)
 r.register("api-keys", ApiKeyViewSet)
 r.register("webhooks", WebhookViewSet)
 r.register("webhook-deliveries", WebhookDeliveryViewSet)
+r.register("asset-categories", AssetCategoryViewSet)
+r.register("assets", AssetViewSet)
+r.register("bank-statements", BankStatementViewSet)
+r.register("attachments", AttachmentViewSet, basename="attachment")
+r.register("eta-documents", EtaDocumentViewSet)
+r.register("landed-costs", LandedCostViewSet)
+r.register("work-centers", WorkCenterViewSet)
+r.register("boms", BomViewSet)
+r.register("manufacturing-orders", ManufacturingOrderViewSet)
+r.register("budgets", BudgetViewSet)
+r.register("recurring-entries", RecurringViewSet)
 
 auth = [
     path("login/", auth_views.LoginView.as_view()),
@@ -69,6 +88,10 @@ urlpatterns = [
     path("api/accounting-settings/", AccountingSettingsView.as_view()),
     path("api/permissions/", PermissionCatalogView.as_view()),
     path("api/reports/<slug:name>/", ReportView.as_view()),
+    path("api/eta-settings/", EtaSettingsView.as_view()),
+    path("api/close-checklist/", ChecklistView.as_view()),
+    path("api/fx-revaluation/", RevaluationView.as_view()),
+    path("api/imports/<slug:kind>/", ImportView.as_view()),
     path("api/", include(r.urls)),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema")),

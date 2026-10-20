@@ -33,6 +33,11 @@ def make_user(company, username, role_name):
 
 
 @pytest.fixture(autouse=True)
+def _media(settings, tmp_path):
+    settings.MEDIA_ROOT = tmp_path
+
+
+@pytest.fixture(autouse=True)
 def _clear_cache():
     from django.core.cache import cache
     cache.clear()  # resets throttle counters between tests

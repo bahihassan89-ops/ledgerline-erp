@@ -60,6 +60,32 @@ CATALOG = {
     "billing.payment.view": "View payments",
     "billing.payment.create": "Create draft payments",
     "billing.payment.post": "Post payments and allocations",
+    # Cheques & banking
+    "billing.cheque.manage": "Deposit, clear and bounce cheques",
+    "banking.statement.view": "View bank statements and reconciliations",
+    "banking.statement.manage": "Import statements and reconcile bank accounts",
+    # Fixed assets
+    "assets.asset.view": "View the fixed-asset register",
+    "assets.asset.manage": "Register and confirm fixed assets",
+    "assets.depreciation.run": "Post depreciation",
+    "assets.asset.dispose": "Dispose of fixed assets",
+    # E-invoicing (ETA)
+    "einvoice.document.view": "View e-invoice submissions",
+    "einvoice.document.submit": "Submit, refresh and resubmit e-invoices",
+    "einvoice.document.cancel": "Request cancellation of e-invoices on ETA",
+    "einvoice.settings.manage": "Configure the ETA connection",
+    # Planning
+    "planning.budget.view": "View budgets and budget-vs-actual",
+    "planning.budget.manage": "Create and approve budgets",
+    "planning.recurring.manage": "Manage recurring journal entries",
+    # Period-end & data
+    "ledger.revaluation.run": "Run foreign-currency revaluation",
+    "ledger.import.run": "Import opening balances and journal spreadsheets",
+    "inventory.landed_cost.manage": "Create and post landed costs",
+    # Production
+    "manufacturing.order.view": "View manufacturing orders and BOMs",
+    "manufacturing.order.manage": "Create and run manufacturing orders",
+    "manufacturing.bom.manage": "Maintain bills of materials and work centers",
     # Approvals
     "approvals.request.view": "View approval requests",
     "approvals.request.decide": "Approve or reject requests (within limit)",
@@ -75,16 +101,20 @@ CLERK = VIEW_ALL + [
 ACCOUNTANT = CLERK + [
     "ledger.entry.post", "billing.invoice.post", "billing.bill.post", "billing.payment.post",
     "sales.order.confirm", "purchasing.order.confirm", "inventory.stock.move", "approvals.request.decide",
+    "billing.cheque.manage", "banking.statement.manage", "einvoice.document.submit", "manufacturing.order.manage",
 ]
 SENIOR = ACCOUNTANT + [
     "ledger.entry.reverse", "partners.partner.manage", "inventory.product.manage", "inventory.stock.adjust",
     "billing.invoice.cancel", "billing.bill.cancel", "sales.order.cancel", "purchasing.order.cancel",
-    "core.costcenter.manage",
+    "core.costcenter.manage", "assets.asset.manage", "inventory.landed_cost.manage", "planning.recurring.manage",
+    "manufacturing.bom.manage", "einvoice.document.cancel",
 ]
 CONTROLLER = SENIOR + [
     "ledger.account.manage", "ledger.journal.manage", "ledger.tax.manage", "ledger.period.manage",
     "ledger.period.close", "ledger.period.post_closed", "partners.credit_limit.manage",
-    "core.currency.manage", "approvals.rule.manage", "audit.log.view",
+    "core.currency.manage", "approvals.rule.manage", "audit.log.view", "assets.depreciation.run",
+    "assets.asset.dispose", "ledger.revaluation.run", "ledger.import.run", "planning.budget.manage",
+    "einvoice.settings.manage",
 ]
 CFO = CONTROLLER + ["ledger.period.lock", "ledger.year.close", "core.company.manage"]
 AUDITOR = VIEW_ALL + ["audit.log.view"]

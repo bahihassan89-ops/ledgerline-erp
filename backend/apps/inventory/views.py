@@ -118,3 +118,42 @@ class StockMoveViewSet(CompanyReadOnlyViewSet):
         m = services.transfer(self.company, v["product"], v["warehouse"], dst, v.get("quantity") or 0, v["date"],
                               request.user, v.get("reason", ""))
         return Response(StockMoveSerializer(m).data, status=201)
+
+
+class LandedCostSerializer(serializers.ModelSerializer):
+    entry_number = serializers.CharField(source="journal_entry.number", read_only=True, default=None)
+
+    class Meta:
+        from .models import LandedCost
+        model = LandedCost
+        fields = ["id", "number", "date", "description", "amount", "allocation", "counter_account", "moves", "state",
+                  "journal_entry", "entry_number"]
+        read_only_fields = ["number", "state", "journal_entry"]
+
+    def validate(self, attrs):
+        company = self.context["company"]
+        for m in attrs.get("moves", []):
+            if m.company_id != company.pk:
+                raise serializers.ValidationError({"moves": "Receipt belongs to another company."})
+        acc = attrs.get("counter_account")
+        if acc and acc.company_id != company.pk:
+            raise serializers.ValidationError({"counter_account": "Account belongs to another company."})
+        if self.instance and self.instance.state != "draft":
+            raise serializers.ValidationError("Posted landed costs cannot be edited.")
+        return attrs
+
+
+class LandedCostViewSet(CompanyViewSet):
+    from .models import LandedCost as _LC
+    queryset = _LC.objects.select_related("journal_entry").prefetch_related("moves")
+    serializer_class = LandedCostSerializer
+    perms = {"list": "inventory.valuation.view", "*": "inventory.landed_cost.manage"}
+
+    def perform_destroy(self, instance):
+        if instance.state != "draft":
+            raise BusinessError("Posted landed costs cannot be deleted.", "not_draft")
+        instance.delete()
+
+    @action(detail=True, methods=["post"])
+    def post(self, request, pk=None):
+        return Response(self.get_serializer(services.post_landed_cost(self.get_object(), request.user)).data)

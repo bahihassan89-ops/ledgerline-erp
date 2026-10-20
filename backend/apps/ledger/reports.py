@@ -167,7 +167,7 @@ CF_DEFAULT = {
     "cash": "cash", "bank": "cash",
     "fixed_asset": "investing", "non_current_asset": "investing",
     "non_current_liability": "financing", "equity": "financing",
-    "retained_earnings": "none", "accumulated_depreciation": "operating",
+    "retained_earnings": "financing", "accumulated_depreciation": "operating",
 }
 CF_LABELS = {
     "receivable": "(Increase) / decrease in trade receivables",
@@ -184,16 +184,20 @@ CF_LABELS = {
     "non_current_asset": "Purchase / disposal of intangible and other non-current assets",
     "non_current_liability": "Proceeds / (repayment) of long-term borrowings",
     "equity": "Capital contributed / (withdrawn)",
+    "retained_earnings": "Dividends and other movements in retained earnings",
 }
 
 
 def cash_flow(company, date_from, date_to):
     """Indirect method (EAS 4 / IAS 7). Built from balance movements of every non-cash account, so it
     always reconciles to the actual change in cash. Closing entries are ignored (net profit is shown
-    instead of its transfer to retained earnings)."""
+    instead of its transfer to retained earnings), and go-live opening-balance entries are part of
+    opening cash, not flows of the period."""
     from collections import defaultdict
+    from .services import settings_for
+    opening_journal = settings_for(company).opening_journal_id
     qs = (JournalLine.objects.filter(company=company, posted=True, date__gte=date_from, date__lte=date_to,
-                                     entry__is_closing=False)
+                                     entry__is_closing=False).exclude(entry__journal_id=opening_journal)
           .values("account__account_type", "account__account_class", "account__cash_flow_category", "account__code",
                   "account__name").annotate(d=Sum("debit"), c=Sum("credit")))
     net_profit = ZERO
@@ -220,8 +224,9 @@ def cash_flow(company, date_from, date_to):
     fin_rows, fin_total = sec("financing")
     operating = net_profit + op_total
     computed = operating + inv_total + fin_total
-    opening_cash = JournalLine.objects.filter(company=company, posted=True, date__lt=date_from,
-                                              account__account_type__in=["cash", "bank"]).aggregate(
+    opening_cash = JournalLine.objects.filter(
+        Q(date__lt=date_from) | Q(date__lte=date_to, entry__journal_id=opening_journal),
+        company=company, posted=True, account__account_type__in=["cash", "bank"]).aggregate(
         d=Sum("debit"), c=Sum("credit"))
     oc = (opening_cash["d"] or ZERO) - (opening_cash["c"] or ZERO)
     return {"date_from": date_from, "date_to": date_to, "net_profit": str(net_profit),

@@ -33,7 +33,8 @@ class ProductSerializer(CompanyScopedSerializer):
 
     class Meta:
         model = Product
-        fields = ["id", "sku", "name", "barcode", "type", "category", "category_name", "uom", "sale_price",
+        fields = ["id", "sku", "name", "name_ar", "eta_item_type", "eta_item_code", "eta_unit_type", "barcode",
+                  "type", "category", "category_name", "uom", "sale_price",
                   "purchase_price", "sale_tax", "purchase_tax", "income_account", "expense_account", "reorder_level",
                   "active", "qty_on_hand", "average_cost"]
 

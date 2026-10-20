@@ -13,7 +13,8 @@ class CurrencySerializer(serializers.ModelSerializer):
 class CompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
-        fields = ["id", "name", "legal_name", "code", "tax_number", "registration_number", "base_currency",
+        fields = ["id", "name", "name_ar", "legal_name", "code", "tax_number", "registration_number", "tax_office",
+                  "base_currency",
                   "country", "address", "fiscal_year_start_month", "lock_date", "bill_price_tolerance_pct", "active"]
         read_only_fields = ["code", "base_currency", "active"]
 

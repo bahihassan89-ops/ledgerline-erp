@@ -157,6 +157,9 @@ class JournalEntryViewSet(CompanyViewSet):
         entry = services.create_entry(company, v["journal"], v["date"], specs, user=request.user,
                                       reference=v.get("reference", ""), narration=v.get("narration", ""),
                                       currency=currency, rate=rate)
+        if v.get("auto_reverse_date"):
+            entry.auto_reverse_date = v["auto_reverse_date"]
+            entry.save(update_fields=["auto_reverse_date"])
         return Response(self.get_serializer(entry).data, status=201)
 
     def update(self, request, *args, **kwargs):
@@ -166,7 +169,7 @@ class JournalEntryViewSet(CompanyViewSet):
         s = self.get_serializer(entry, data=request.data, partial=kwargs.get("partial", False))
         s.is_valid(raise_exception=True)
         v = s.validated_data
-        for f in ("journal", "date", "reference", "narration"):
+        for f in ("journal", "date", "reference", "narration", "auto_reverse_date"):
             if f in v:
                 setattr(entry, f, v[f])
         if "currency" in v:
@@ -240,8 +243,15 @@ class ReportView(APIView):
             partner = q.get("partner") or None
             return Response(reports.general_ledger(company, acc, dfrom, dto, partner=partner))
         if name == "balance-sheet":
-            return Response(reports.balance_sheet(company, parse_date(q.get("as_of"), today, "as_of"), level))
+            as_of = parse_date(q.get("as_of"), today, "as_of")
+            if q.get("compare_as_of"):
+                return Response(reports.comparative(reports.balance_sheet, company, (as_of, level),
+                                                    (parse_date(q["compare_as_of"]), level)))
+            return Response(reports.balance_sheet(company, as_of, level))
         if name == "income-statement":
+            if q.get("compare_from") and q.get("compare_to"):
+                return Response(reports.comparative(reports.income_statement, company, (dfrom, dto, level),
+                                                    (parse_date(q["compare_from"]), parse_date(q["compare_to"]), level)))
             return Response(reports.income_statement(company, dfrom, dto, level))
         if name in ("ar-aging", "ap-aging"):
             from apps.billing.services import aging
@@ -260,6 +270,20 @@ class ReportView(APIView):
             return Response(data)
         if name == "vat":
             return Response(vat_report(company, dfrom, dto))
+        if name == "vat-return":
+            from apps.billing.services import vat_return
+            return Response(vat_return(company, dfrom, dto))
+        if name in ("withholding", "withholding-customers"):
+            from apps.billing.services import withholding_report
+            return Response(withholding_report(company, dfrom, dto, "purchase" if name == "withholding" else "sale"))
+        if name == "cash-flow":
+            return Response(reports.cash_flow(company, dfrom, dto))
+        if name == "fixed-assets":
+            from apps.assets.services import register
+            return Response(register(company, parse_date(q.get("as_of"), today, "as_of")))
+        if name == "cheques":
+            from apps.billing.services import cheque_register
+            return Response(cheque_register(company, q.get("direction"), q.get("state")))
         raise drf_serializers.ValidationError({"report": "Unknown report."})
 
 
@@ -267,7 +291,7 @@ def vat_report(company, dfrom, dto):
     """Output VAT (sales) and input VAT (purchases) by tax code, with the taxable base."""
     rows = []
     output_tax = input_tax = Decimal(0)
-    for tax in Tax.objects.filter(company=company).select_related("account"):
+    for tax in Tax.objects.filter(company=company, kind="vat").select_related("account"):
         agg = (JournalLine.objects.filter(company=company, posted=True, date__gte=dfrom, date__lte=dto, tax=tax,
                                           account=tax.account)
                .aggregate(d=Sum("debit"), c=Sum("credit"), b=Sum("tax_base")))

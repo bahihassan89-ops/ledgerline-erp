@@ -14,9 +14,10 @@ class PaymentTermSerializer(CompanyScopedSerializer):
 class PartnerSerializer(CompanyScopedSerializer):
     class Meta:
         model = Partner
-        fields = ["id", "code", "name", "is_customer", "is_vendor", "tax_number", "email", "phone", "address",
-                  "country", "currency", "payment_term", "credit_limit", "credit_check", "on_hold",
-                  "receivable_account", "payable_account", "notes", "active"]
+        fields = ["id", "code", "name", "name_ar", "is_customer", "is_vendor", "tax_number", "email", "phone",
+                  "address", "country", "currency", "payment_term", "credit_limit", "credit_check", "on_hold",
+                  "receivable_account", "payable_account", "withholding_tax", "eta_receiver_type", "national_id",
+                  "governate", "region_city", "street", "building_number", "postal_code", "notes", "active"]
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -28,6 +29,9 @@ class PartnerSerializer(CompanyScopedSerializer):
             if self.instance or attrs.get("credit_limit") or attrs.get("credit_check") or attrs.get("on_hold"):
                 raise serializers.ValidationError({changing[0]: "Changing credit settings requires the "
                                                                 "credit-limit permission."})
+        wht = attrs.get("withholding_tax")
+        if wht and wht.kind != "withholding":
+            raise serializers.ValidationError({"withholding_tax": "Choose a withholding tax code."})
         for f, t in (("receivable_account", "receivable"), ("payable_account", "payable")):
             acc = attrs.get(f)
             if acc and acc.account_type != t:

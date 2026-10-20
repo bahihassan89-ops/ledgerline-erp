@@ -13,7 +13,8 @@ class AccountSerializer(CompanyScopedSerializer):
 
     class Meta:
         model = Account
-        fields = ["id", "code", "name", "parent", "parent_code", "account_class", "account_type", "level", "is_group",
+        fields = ["id", "code", "name", "name_ar", "parent", "parent_code", "account_class", "account_type", "level",
+                  "is_group", "cash_flow_category",
                   "reconcilable", "is_control", "currency", "requires_cost_center", "description", "active"]
         read_only_fields = ["level"]
 
@@ -59,7 +60,8 @@ class FiscalYearSerializer(serializers.ModelSerializer):
 class TaxSerializer(CompanyScopedSerializer):
     class Meta:
         model = Tax
-        fields = ["id", "code", "name", "scope", "rate", "price_include", "account", "active"]
+        fields = ["id", "code", "name", "name_ar", "scope", "kind", "rate", "price_include", "account", "eta_type",
+                  "eta_subtype", "min_base", "active"]
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -67,9 +69,13 @@ class TaxSerializer(CompanyScopedSerializer):
         scope = attrs.get("scope", getattr(self.instance, "scope", None))
         if acc and acc.is_group:
             raise serializers.ValidationError({"account": "Choose a postable (non-group) account."})
-        expected = "tax_output" if scope == "sale" else "tax_input"
+        kind = attrs.get("kind", getattr(self.instance, "kind", "vat"))
+        expected = {("sale", "vat"): "tax_output", ("purchase", "vat"): "tax_input",
+                    ("purchase", "withholding"): "wht_payable", ("sale", "withholding"): "wht_receivable"}[(scope, kind)]
         if acc and acc.account_type != expected:
-            raise serializers.ValidationError({"account": f"A {scope} tax must post to a '{expected}' account."})
+            raise serializers.ValidationError({"account": f"A {scope} {kind} tax must post to a '{expected}' account."})
+        if kind == "withholding" and attrs.get("price_include"):
+            raise serializers.ValidationError({"price_include": "Withholding taxes cannot be price-inclusive."})
         rate = attrs.get("rate")
         if rate is not None and not (0 <= rate <= 100):
             raise serializers.ValidationError({"rate": "Rate must be between 0 and 100."})
@@ -110,7 +116,7 @@ class JournalEntrySerializer(CompanyScopedSerializer):
         fields = ["id", "number", "journal", "journal_code", "date", "reference", "narration", "state", "currency",
                   "rate", "source_type", "source_id", "total_debit", "total_credit", "posted_by_name", "posted_at",
                   "created_by_name", "created_at", "reversal_of", "reversal_of_number", "reversed_by", "is_closing",
-                  "lines"]
+                  "auto_reverse_date", "lines"]
         read_only_fields = ["number", "state", "source_type", "source_id", "total_debit", "total_credit",
                             "posted_at", "reversal_of", "is_closing"]
         extra_kwargs = {"currency": {"required": False}, "rate": {"required": False}}

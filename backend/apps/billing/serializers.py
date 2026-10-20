@@ -13,9 +13,9 @@ class InvoiceLineSerializer(CompanyScopedSerializer):
     class Meta:
         model = InvoiceLine
         fields = ["id", "product", "description", "account", "account_code", "quantity", "unit_price",
-                  "discount_pct", "tax", "subtotal", "tax_amount", "total", "cost_center", "sales_line",
-                  "purchase_line"]
-        read_only_fields = ["subtotal", "tax_amount", "total", "sales_line", "purchase_line"]
+                  "discount_pct", "tax", "withholding_tax", "subtotal", "tax_amount", "wht_amount", "total",
+                  "cost_center", "sales_line", "purchase_line"]
+        read_only_fields = ["subtotal", "tax_amount", "wht_amount", "total", "sales_line", "purchase_line"]
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -24,6 +24,10 @@ class InvoiceLineSerializer(CompanyScopedSerializer):
             raise serializers.ValidationError({"account": "Choose an active postable account."})
         if acc and acc.reconcilable:
             raise serializers.ValidationError({"account": "Invoice lines cannot post to receivable/payable accounts."})
+        if attrs.get("tax") and attrs["tax"].kind != "vat":
+            raise serializers.ValidationError({"tax": "Choose a VAT code here; withholding goes in its own column."})
+        if attrs.get("withholding_tax") and attrs["withholding_tax"].kind != "withholding":
+            raise serializers.ValidationError({"withholding_tax": "Choose a withholding tax code."})
         return attrs
 
 
@@ -48,15 +52,18 @@ class InvoiceSerializer(DocumentSerializer):
     origin_number = serializers.CharField(source="origin_invoice.number", read_only=True, default=None)
     allocations = serializers.SerializerMethodField()
     days_overdue = serializers.SerializerMethodField()
+    eta = serializers.SerializerMethodField()
 
     class Meta:
         model = Invoice
         fields = ["id", "move_type", "number", "partner", "partner_name", "date", "due_date", "payment_term",
                   "currency", "rate", "reference", "state", "payment_state", "amount_untaxed", "amount_tax",
-                  "amount_total", "amount_total_base", "amount_residual", "journal_entry", "entry_number",
-                  "origin_invoice", "origin_number", "sales_order", "purchase_order", "notes", "posted_at",
-                  "created_at", "lines", "allocations", "days_overdue"]
-        read_only_fields = ["number", "state", "payment_state", "amount_untaxed", "amount_tax", "amount_total",
+                  "amount_wht", "amount_total", "amount_total_base", "amount_residual", "journal_entry",
+                  "entry_number", "origin_invoice", "origin_number", "sales_order", "purchase_order", "notes",
+                  "return_to_stock", "is_opening", "posted_at", "created_at", "lines", "allocations",
+                  "days_overdue", "eta"]
+        read_only_fields = ["number", "state", "payment_state", "amount_untaxed", "amount_tax", "amount_wht",
+                            "is_opening", "amount_total",
                             "amount_total_base", "amount_residual", "journal_entry", "origin_invoice",
                             "sales_order", "purchase_order", "posted_at"]
         extra_kwargs = {"rate": {"required": False}}
@@ -65,6 +72,15 @@ class InvoiceSerializer(DocumentSerializer):
         qs = list(obj.allocations.select_related("payment", "credit_note", "fx_entry")) + \
             list(obj.credit_allocations.select_related("invoice", "fx_entry"))
         return AllocationSerializer(qs, many=True).data
+
+    def get_eta(self, obj):
+        from apps.einvoice.models import EtaDocument
+        try:
+            d = obj.eta_document
+        except EtaDocument.DoesNotExist:
+            return None
+        return {"id": d.pk, "state": d.state, "uuid": d.uuid, "long_id": d.long_id, "url": d.public_url(),
+                "errors": d.errors, "submitted_at": d.submitted_at, "document_type": d.document_type}
 
     def get_days_overdue(self, obj):
         from django.utils import timezone
@@ -100,8 +116,10 @@ class PaymentSerializer(CompanyScopedSerializer):
         model = Payment
         fields = ["id", "direction", "number", "partner", "partner_name", "journal", "journal_code", "date",
                   "amount", "currency", "rate", "reference", "memo", "state", "amount_unallocated", "journal_entry",
-                  "entry_number", "posted_at", "allocations"]
-        read_only_fields = ["number", "state", "amount_unallocated", "journal_entry", "posted_at"]
+                  "entry_number", "posted_at", "allocations", "method", "cheque_number", "cheque_bank",
+                  "cheque_due_date", "cheque_state", "cheque_cleared_entry"]
+        read_only_fields = ["number", "state", "amount_unallocated", "journal_entry", "posted_at", "cheque_state",
+                            "cheque_cleared_entry"]
         extra_kwargs = {"rate": {"required": False}}
 
     def validate(self, attrs):
