@@ -34,12 +34,34 @@ services:
       <<: *env
       ERP_DB_USER: erp_app            # the app runs with DML-only rights (see deploy/db-init.sh)
       ERP_DB_PASSWORD: ${ERP_DB_PASSWORD}
+    volumes:
+      - media:/app/media
     depends_on: { migrate: { condition: service_completed_successfully } }
     restart: unless-stopped
 
   webhooks:
     build: ./backend
     command: python manage.py deliver_webhooks --loop
+    environment:
+      <<: *env
+      ERP_DB_USER: erp_app
+      ERP_DB_PASSWORD: ${ERP_DB_PASSWORD}
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    restart: unless-stopped
+
+  eta:
+    build: ./backend
+    command: python manage.py eta_sync --loop --received
+    environment:
+      <<: *env
+      ERP_DB_USER: erp_app
+      ERP_DB_PASSWORD: ${ERP_DB_PASSWORD}
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    restart: unless-stopped
+
+  scheduler:
+    build: ./backend
+    command: sh -c "while true; do python manage.py run_recurring; sleep 3600; done"
     environment:
       <<: *env
       ERP_DB_USER: erp_app
@@ -55,3 +77,4 @@ services:
 
 volumes:
   pgdata:
+  media:     # attachments — include in backups

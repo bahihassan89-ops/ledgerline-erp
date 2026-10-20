@@ -58,13 +58,24 @@ Webhooks: HTTPS only, URL checked against private/loopback/link-local ranges at 
 at send time (SSRF), redirects not followed, HMAC-SHA256 signature with timestamp, transactional
 outbox (events only leave after the business change commits), exponential retries.
 
-## 7. Error handling & secrets
+## 7. E-invoicing and attachments
+
+* ETA client secret and signing-agent token are encrypted at rest and never returned by the API.
+  Production refuses unsigned (v0.9) mode. The eSeal private key never leaves the USB token: the
+  server only sends the document to the signing agent over HTTPS with a bearer token. Run the agent
+  on a hardened PC on the internal network, reachable only from the ERP server.
+* Attachments: allow-listed types, content checked against the extension (magic bytes), 10 MB cap,
+  stored outside any web root under random names, served only through the authenticated API with
+  per-record-type permission checks; SHA-256 recorded in the audit log; files of posted records
+  cannot be deleted. Include the media volume in backups.
+
+## 8. Error handling & secrets
 
 * Unhandled errors return a generic message; details go to server logs only.
 * All secrets come from environment variables; production refuses to start with defaults, short keys or DEBUG on.
 * Money is `Decimal` end to end (never float) and serialized as strings.
 
-## 8. Operational checklist before go-live
+## 9. Operational checklist before go-live
 
 - [ ] Long random `ERP_SECRET_KEY` and `ERP_FIELD_ENCRYPTION_KEY` stored in a secrets manager
 - [ ] TLS certificate; only port 443 exposed; database not reachable from the internet
@@ -74,3 +85,5 @@ outbox (events only leave after the business change commits), exponential retrie
 - [ ] Audit log export to WORM storage
 - [ ] Independent penetration test
 - [ ] Dependency updates monitored (`pip-audit`, `npm audit`)
+- [ ] ETA: pre-production tests accepted before switching to production; signing-agent PC hardened
+- [ ] Workers running: `eta_sync`, `deliver_webhooks`, scheduler (`run_recurring`)

@@ -4,7 +4,7 @@ An accounting-first ERP: general ledger, receivables, payables, sales, purchasin
 costing, built for a professional accounting team. The accounting rules are enforced in the
 application **and** in the PostgreSQL database itself.
 
-* **Accounting rules** → [`docs/ACCOUNTING_DESIGN.md`](docs/ACCOUNTING_DESIGN.md) (start here; written for non-accountants too)
+* **Accounting handbook (Egypt edition)** → [`docs/ACCOUNTING_DESIGN.md`](docs/ACCOUNTING_DESIGN.md) — every rule, entry, control and report; start here
 * **Security model** → [`docs/SECURITY.md`](docs/SECURITY.md)
 * **API** → `http://localhost:8000/api/docs/` (interactive OpenAPI) once running
 
@@ -21,6 +21,12 @@ application **and** in the PostgreSQL database itself.
 | Reports | Trial balance (by level), general ledger, balance sheet, income statement, AR/AP aging, VAT, sub-ledger ↔ GL reconciliation, inventory valuation, CSV export |
 | Controls | Roles with managerial **level 0–5** and **approval limits**; multi-step approval rules by amount; segregation of duties (no self-approval); per-company permissions |
 | Security | Argon2 passwords, lockout, TOTP MFA (required for level ≥ 4), 15-min JWT with rotating refresh tokens, hash-chained append-only audit log, DB integrity triggers, least-privilege DB role |
+| **Egypt** | VAT 14% / 5% / zero-rated / exempt with ETA codes; withholding tax (خصم وإضافة) 1%/3%/5% with EGP 300 threshold; Form 41 and VAT return reports; **ETA e-invoicing** (validation, v1.0 documents, signing agent, submit/status/cancel, received documents); bilingual Arabic/English chart, master data and printed tax invoices |
+| Treasury | Bank statement import, auto/manual matching, reconciliation statement; cheques receivable/payable lifecycle (deposit, clear, bounce) |
+| Fixed assets | Register with custodian & location, straight-line / declining depreciation, monthly run, disposal gain/loss, tax depreciation per Law 91/2005 art. 25 |
+| Production | BOMs, work centers, manufacturing orders with actual absorption costing (materials, labour, overhead → WIP → finished goods), scrap, cost sheets, WIP reconciliation |
+| Period end | Close checklist (16 controls), FX revaluation with auto-reversal, recurring entries, auto-reversing accruals, budgets vs actual, cash flow statement, prior-year comparatives, landed costs, returns to stock |
+| Go-live | CSV imports: opening trial balance, open customer/vendor items, journal spreadsheets (payroll); attachments on all key documents |
 | Integration | REST API for everything (OpenAPI docs), scoped API keys, signed webhooks (outbox + retries), `Idempotency-Key` for safe retries |
 
 ## Quick start (development)
@@ -37,7 +43,8 @@ cd backend
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 python manage.py migrate
-python manage.py seed_demo        # demo company + users + a month of transactions
+python manage.py seed_demo        # demo company (USD) + users + a month of transactions
+python manage.py seed_demo_eg     # Egyptian demo company (EGP, VAT, WHT, cheques, assets, production)
 python manage.py runserver        # http://localhost:8000
 
 # 3. frontend (new terminal)
@@ -61,8 +68,17 @@ npm run dev                       # http://localhost:5173
 ### Set up your own company
 
 ```bash
-python manage.py setup_company --name "Acme Trading LLC" --code acme --currency SAR --vat 15 --fy-start-month 1
+python manage.py setup_company --name "Nile Trading SAE" --name-ar "النيل للتجارة" --code nile --country EG
 python manage.py createsuperuser      # then assign roles in Users & Roles
+python manage.py sync_chart --code nile --update-roles   # after upgrades: new accounts & permissions
+```
+
+### Background jobs (run under a process manager or cron)
+
+```bash
+python manage.py deliver_webhooks --loop     # webhook outbox
+python manage.py eta_sync --loop --received  # ETA submissions, status refresh, received documents
+python manage.py run_recurring               # daily: recurring journal entries
 ```
 This creates the standard chart of accounts (≈95 accounts, editable), journals, VAT codes,
 default accounts, the seven roles, default approval rules, payment terms, a warehouse and product
@@ -73,11 +89,14 @@ categories, and the current fiscal year.
 ```bash
 cd backend && .venv/bin/python -m pytest tests
 ```
-35 tests cover: double-entry and period rules, DB triggers (immutability, deferred balance check,
+68 tests cover: double-entry and period rules, DB triggers (immutability, deferred balance check,
 append-only audit), FIFO/AVCO costing and rounding, procure-to-pay with 3-way match and price
 variance, order-to-cash with credit notes and aging, FX loss, approvals & SoD, approval limits,
 cross-company isolation, privilege-escalation attempts, login lockout, MFA with replay protection,
-refresh-token rotation, API-key scope capping, idempotent retries.
+refresh-token rotation, API-key scope capping, idempotent retries, and every Egyptian/new module
+(VAT/WHT postings and reports, ETA build/serialize/sign/submit/cancel, cheques, bank reconciliation,
+depreciation & disposal, FX revaluation, returns, landed costs, budgets, recurring entries, imports,
+manufacturing costing, cash flow, close checklist, attachments).
 
 ## Production
 
@@ -129,14 +148,7 @@ frontend/                     React + TypeScript (Vite)
 docs/                         accounting design & security model
 ```
 
-## Not yet built (recommended next phases)
+## Not yet built
 
-Being explicit so nothing is assumed to exist:
-
-1. **Bank reconciliation** — statement import (CSV/MT940/CAMT.053) and matching.
-2. **Fixed assets** — asset register, depreciation schedules, disposals.
-3. **E-invoicing compliance** for your jurisdiction (e.g. ZATCA Phase 2 in KSA, UAE FTA e-invoicing): XML/QR, cryptographic stamping, clearance API.
-4. **Unrealised FX revaluation** of open foreign-currency balances at month end.
-5. **PDF documents** (invoice/PO/statement printing with your branding) and email sending.
-6. **Customer/vendor returns with stock** (credit notes currently adjust value; returning goods to stock is done via adjustment).
-7. Budgets vs. actuals, recurring entries, document attachments, landed costs, standard costing, consolidation across companies, payroll.
+See §22 of the handbook: B2C e-receipts, table tax, payroll, deferred tax, standard costing, MRP,
+consolidation, Arabic (RTL) screen translation, email sending.

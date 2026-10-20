@@ -173,11 +173,11 @@ def setup(company, vat, year, egypt=None):
                            account=acc["210301"])
         Tax.objects.create(company=company, code="EXEMPT-P", name="Exempt (purchases)", scope="purchase", rate=0,
                            account=acc["110403"])
+    k = Decimal(10) if company.base_currency_id == "EGP" else Decimal(1)  # amounts scaled for EGP
     for name, level, perms, limit in DEFAULT_ROLES:
         Role.objects.get_or_create(company=company, name=name, defaults={
             "level": level, "permissions": sorted(set(perms)),
-            "approval_limit": Decimal(limit) if limit is not None else None})
-    k = Decimal(10) if company.base_currency_id == "EGP" else Decimal(1)  # thresholds scaled for EGP
+            "approval_limit": Decimal(limit) * k if limit is not None else None})
     for name, dtype, amount, levels in [
         ("PO above threshold → Controller", "purchase_order", 50000, [4]),
         ("Large PO → Controller + CFO", "purchase_order", 250000, [4, 5]),
