@@ -1,0 +1,57 @@
+# Production-style stack. Put TLS in front (load balancer / Caddy / Traefik) and set real secrets in .env
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: erp
+      POSTGRES_USER: erp_owner
+      POSTGRES_PASSWORD: ${DB_OWNER_PASSWORD:?set DB_OWNER_PASSWORD}
+      ERP_APP_PASSWORD: ${ERP_DB_PASSWORD:?set ERP_DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/db-init.sh:/docker-entrypoint-initdb.d/10-app-role.sh:ro
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U erp_owner -d erp"], interval: 5s, retries: 10 }
+    restart: unless-stopped
+
+  migrate:
+    build: ./backend
+    command: sh -c "python manage.py migrate --noinput && python manage.py apply_db_grants"
+    environment: &env
+      ERP_ENV: prod
+      ERP_SECRET_KEY: ${ERP_SECRET_KEY:?set ERP_SECRET_KEY}
+      ERP_FIELD_ENCRYPTION_KEY: ${ERP_FIELD_ENCRYPTION_KEY:?set ERP_FIELD_ENCRYPTION_KEY}
+      ERP_ALLOWED_HOSTS: ${ERP_ALLOWED_HOSTS:-localhost}
+      ERP_CORS_ORIGINS: ${ERP_CORS_ORIGINS:-https://localhost}
+      ERP_DB_HOST: db
+      ERP_DB_NAME: erp
+      ERP_DB_USER: erp_owner          # migrations run as the schema owner
+      ERP_DB_PASSWORD: ${DB_OWNER_PASSWORD}
+    depends_on: { db: { condition: service_healthy } }
+
+  backend:
+    build: ./backend
+    environment:
+      <<: *env
+      ERP_DB_USER: erp_app            # the app runs with DML-only rights (see deploy/db-init.sh)
+      ERP_DB_PASSWORD: ${ERP_DB_PASSWORD}
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    restart: unless-stopped
+
+  webhooks:
+    build: ./backend
+    command: python manage.py deliver_webhooks --loop
+    environment:
+      <<: *env
+      ERP_DB_USER: erp_app
+      ERP_DB_PASSWORD: ${ERP_DB_PASSWORD}
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports: ["8080:80"]
+    depends_on: [backend]
+    restart: unless-stopped
+
+volumes:
+  pgdata:

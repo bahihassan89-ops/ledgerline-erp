@@ -1,0 +1,14 @@
+argon2-cffi==25.1.0
+cryptography==50.0.2
+Django==5.2.18
+django-cors-headers==4.9.0
+django-filter==26.2
+djangorestframework==3.18.3
+djangorestframework_simplejwt==5.5.1
+drf-spectacular==0.30.0
+gunicorn==26.2.0
+psycopg==3.3.6
+psycopg-binary==3.3.6
+PyOTP==2.10.0
+pytest==9.1.1
+pytest-django==4.14.0
