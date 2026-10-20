@@ -55,7 +55,7 @@ class AccountViewSet(CompanyViewSet):
         bal = {r["account_id"]: r["closing"] for r in tb["rows"]}
         nodes = {}
         for a in Account.objects.filter(company=self.company).order_by("code"):
-            nodes[a.pk] = {"id": a.pk, "code": a.code, "name": a.name, "level": a.level, "is_group": a.is_group,
+            nodes[a.pk] = {"id": a.pk, "code": a.code, "name": a.name, "name_ar": a.name_ar, "level": a.level, "is_group": a.is_group,
                            "account_class": a.account_class, "account_type": a.account_type, "active": a.active,
                            "is_control": a.is_control, "reconcilable": a.reconcilable,
                            "balance": bal.get(a.pk, "0"), "parent": a.parent_id, "children": []}
@@ -77,7 +77,7 @@ class TaxViewSet(CompanyViewSet):
     queryset = Tax.objects.all()
     serializer_class = TaxSerializer
     perms = {"list": "authenticated", "*": "ledger.tax.manage"}
-    filterset_fields = ["scope", "active"]
+    filterset_fields = ["scope", "active", "kind"]
     pagination_class = None
 
 

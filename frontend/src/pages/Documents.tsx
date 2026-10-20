@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
-import { AccountSelect, CostCenterSelect, CurrencySelect, JournalSelect, PartnerSelect, ProductSelect, SimpleSelect, TaxSelect } from '../components/pickers'
+import Attachments from '../components/Attachments'
+import { AccountSelect, CostCenterSelect, CurrencySelect, JournalSelect, PartnerSelect, ProductSelect, SimpleSelect, TaxSelect, WhtSelect } from '../components/pickers'
 import { DataTable, Field, Modal, PageHead, StateBadge, useAction } from '../components/ui'
-import { del, post, put } from '../lib/api'
+import { del, get, post, put } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { fmtDate, money, num, today } from '../lib/format'
 import { useFetch, useOptions } from '../lib/hooks'
@@ -49,7 +50,7 @@ export default function Documents({ kind }: { kind: Kind }) {
   )
 }
 
-type L = { id?: number; product: number | null; description: string; account: number | null; quantity: string; unit_price: string; discount_pct: string; tax: number | null; cost_center: number | null; purchase_line?: number; sales_line?: number }
+type L = { id?: number; product: number | null; description: string; account: number | null; quantity: string; unit_price: string; discount_pct: string; tax: number | null; withholding_tax: number | null; cost_center: number | null; purchase_line?: number; sales_line?: number }
 
 export function DocEditor({ kind, doc, defaults, onClose, onChanged }: { kind: Kind; doc: any; defaults?: any; onClose: () => void; onChanged: () => void }) {
   const cfg = CFG[kind]
@@ -66,16 +67,22 @@ export function DocEditor({ kind, doc, defaults, onClose, onChanged }: { kind: K
   const [pay, setPay] = useState(false)
   const { run, busy } = useAction()
   const pById = useMemo(() => Object.fromEntries(products.map((p) => [p.id, p])), [products])
+  const partners = useOptions<any>('/partners/', { active: true })
+  const partnerWht = partners.find((x) => x.id === h.partner)?.withholding_tax ?? null
   const tById = useMemo(() => Object.fromEntries(taxes.map((t) => [t.id, t])), [taxes])
 
   const calc = (l: L) => {
     const gross = num(l.quantity) * num(l.unit_price) * (1 - num(l.discount_pct) / 100)
     const t = l.tax ? tById[l.tax] : null
     const r = t ? num(t.rate) / 100 : 0
-    if (t?.price_include) { const sub = gross / (1 + r); return { sub, tax: gross - sub } }
-    return { sub: gross, tax: gross * r }
+    const sub = t?.price_include ? gross / (1 + r) : gross
+    const w = l.withholding_tax ? tById[l.withholding_tax] : null
+    return { sub, tax: t?.price_include ? gross - sub : sub * r, wht: w ? sub * num(w.rate) / 100 : 0 }
   }
-  const totals = lines.reduce((s, l) => { const c = calc(l); return { sub: s.sub + c.sub, tax: s.tax + c.tax } }, { sub: 0, tax: 0 })
+  const raw = lines.reduce((s, l) => { const c = calc(l); return { sub: s.sub + c.sub, tax: s.tax + c.tax, wht: s.wht + c.wht } }, { sub: 0, tax: 0, wht: 0 })
+  // withholding only applies from the code's minimum base (e.g. EGP 300 per document)
+  const whtMin = Math.max(0, ...lines.map((l) => (l.withholding_tax ? num(tById[l.withholding_tax]?.min_base) : 0)))
+  const totals = { ...raw, wht: raw.sub >= whtMin ? raw.wht : 0 }
   const setLine = (i: number, patch: Partial<L>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)))
   const pickProduct = (i: number, id: number | null) => {
     const p = id ? pById[id] : null
@@ -83,9 +90,9 @@ export function DocEditor({ kind, doc, defaults, onClose, onChanged }: { kind: K
     const cat = cats.find((c) => c.id === p.category)
     const account = kind === 'invoices' ? (p.income_account || cat?.income_account)
       : (p.type === 'stock' ? settings?.grni_account : (p.expense_account || cat?.expense_account))
-    setLine(i, { product: id, description: p.name, account: account ?? null, unit_price: String(num(kind === 'invoices' ? p.sale_price : p.purchase_price)), tax: (kind === 'invoices' ? p.sale_tax : p.purchase_tax) ?? null })
+    setLine(i, { product: id, description: p.name, account: account ?? null, unit_price: String(num(kind === 'invoices' ? p.sale_price : p.purchase_price)), tax: (kind === 'invoices' ? p.sale_tax : p.purchase_tax) ?? null, withholding_tax: partnerWht })
   }
-  const body = () => ({ ...h, due_date: h.due_date || null, lines: lines.map((l) => ({ id: l.id, product: l.product, description: l.description || '-', account: l.account, quantity: l.quantity || '0', unit_price: l.unit_price || '0', discount_pct: l.discount_pct || '0', tax: l.tax, cost_center: l.cost_center })) })
+  const body = () => ({ ...h, due_date: h.due_date || null, lines: lines.map((l) => ({ id: l.id, product: l.product, description: l.description || '-', account: l.account, quantity: l.quantity || '0', unit_price: l.unit_price || '0', discount_pct: l.discount_pct || '0', tax: l.tax, withholding_tax: l.withholding_tax, cost_center: l.cost_center })) })
   const save = async () => { const r = await run(() => (d ? put(`${cfg.base}${d.id}/`, body()) : post(cfg.base, body())), 'Saved'); if (r) { setD(r); onChanged() }; return r }
   const doPost = async () => {
     const saved = editable ? await save() : d
@@ -101,13 +108,17 @@ export function DocEditor({ kind, doc, defaults, onClose, onChanged }: { kind: K
         {d && editable && can(`${cfg.p}.create`) && <button className="danger" onClick={async () => { if (window.confirm('Delete this draft?') && await run(() => del(`${cfg.base}${d.id}/`)) !== undefined) { onChanged(); onClose() } }}>Delete</button>}
         {d?.journal_entry && <button onClick={() => setShowEntry(true)}>View journal entry</button>}
         <span style={{ flex: 1 }} />
-        {d?.state === 'posted' && can(`${cfg.p}.cancel`) && !d.move_type.endsWith('refund') && <button onClick={() => act('refund', `${cfg.types[1][1]} draft created`, { reason: window.prompt('Reason for credit/debit note?') || '' })}>Create {cfg.types[1][1].toLowerCase()}</button>}
+        {d && <button onClick={() => window.open(`/print/${kind}/${d.id}`, '_blank')}>Print</button>}
+        {d?.state === 'posted' && can(`${cfg.p}.cancel`) && !d.move_type.endsWith('refund') && <button onClick={() => { const reason = window.prompt('Reason for the credit/debit note?'); if (reason === null) return; const ret = window.confirm('Are goods physically being returned to stock?\n\nOK = yes, create stock moves · Cancel = price/allowance only'); act('refund', `${cfg.types[1][1]} draft created`, { reason, return_to_stock: ret }) }}>Create {cfg.types[1][1].toLowerCase()}</button>}
+        {kind === 'invoices' && d?.state === 'posted' && d.move_type === 'out_invoice' && can('billing.invoice.create') && <button onClick={() => act('debit-note', 'Debit note draft created', { reason: window.prompt('Reason for the debit note?') || '' })}>Debit note</button>}
         {d && d.state !== 'cancelled' && can(`${cfg.p}.cancel`) && (d.state !== 'posted' || num(d.amount_residual) === num(d.amount_total)) && <button className="danger" onClick={() => { const r = window.prompt('Reason for cancelling (audit trail):'); if (r) act('cancel', 'Cancelled', { reason: r }) }}>Cancel</button>}
         {d?.state === 'posted' && num(d.amount_residual) > 0 && can('billing.payment.post') && <button onClick={() => setPay(true)}>Register payment</button>}
         {editable && can(`${cfg.p}.create`) && <button disabled={busy} onClick={save}>Save draft</button>}
         {(editable || d?.state === 'approved') && can(`${cfg.p}.post`) && <button className="primary" disabled={busy || !lines.length} onClick={doPost}>Post</button>}
       </>}>
       {d?.state === 'to_approve' && <div className="alert warn">Waiting for approval — see the Approvals inbox. It can be posted once approved.</div>}
+      {d?.eta && <EtaPanel doc={d} onChanged={(x: any) => { setD(x); onChanged() }} />}
+      {d?.return_to_stock && <div className="alert info">Goods return: stock moves are created when this note is posted.</div>}
       {d?.state === 'approved' && <div className="alert info">Approved. Ready to post.</div>}
       {d?.origin_number && <div className="alert info">{isRefund ? cfg.types[1][1] : 'Document'} against {d.origin_number}</div>}
       <div className="grid form">
@@ -121,7 +132,7 @@ export function DocEditor({ kind, doc, defaults, onClose, onChanged }: { kind: K
       </div>
       <div className="card">
         <div className="table-wrap"><table className="data lines">
-          <thead><tr><th style={{ width: '17%' }}>Product</th><th>Description</th><th style={{ width: '17%' }}>Account</th><th className="num" style={{ width: 80 }}>Qty</th><th className="num" style={{ width: 110 }}>Unit price</th><th className="num" style={{ width: 70 }}>Disc %</th><th style={{ width: 130 }}>Tax</th><th style={{ width: 110 }}>Cost center</th><th className="num">Subtotal</th><th /></tr></thead>
+          <thead><tr><th style={{ width: '15%' }}>Product</th><th>Description</th><th style={{ width: '15%' }}>Account</th><th className="num" style={{ width: 75 }}>Qty</th><th className="num" style={{ width: 100 }}>Unit price</th><th className="num" style={{ width: 65 }}>Disc %</th><th style={{ width: 120 }}>VAT</th><th style={{ width: 120 }}>Withholding</th><th style={{ width: 100 }}>Cost center</th><th className="num">Subtotal</th><th /></tr></thead>
           <tbody>{lines.map((l, i) => (
             <tr key={i}>
               <td><ProductSelect value={l.product} onChange={(v) => pickProduct(i, v)} disabled={!editable || !!l.purchase_line || !!l.sales_line} /></td>
@@ -131,6 +142,7 @@ export function DocEditor({ kind, doc, defaults, onClose, onChanged }: { kind: K
               <td><input className="num" value={l.unit_price} onChange={(e) => setLine(i, { unit_price: e.target.value })} disabled={!editable} /></td>
               <td><input className="num" value={l.discount_pct} onChange={(e) => setLine(i, { discount_pct: e.target.value })} disabled={!editable} /></td>
               <td><TaxSelect scope={cfg.scope} value={l.tax} onChange={(v) => setLine(i, { tax: v })} disabled={!editable} /></td>
+              <td><WhtSelect scope={cfg.scope} value={l.withholding_tax} onChange={(v) => setLine(i, { withholding_tax: v })} disabled={!editable} /></td>
               <td><CostCenterSelect value={l.cost_center} onChange={(v) => setLine(i, { cost_center: v })} disabled={!editable} /></td>
               <td className="num">{money(calc(l).sub)}</td>
               <td>{editable && <button className="sm ghost" onClick={() => setLines(lines.filter((_, j) => j !== i))}>✕</button>}</td>
@@ -138,8 +150,10 @@ export function DocEditor({ kind, doc, defaults, onClose, onChanged }: { kind: K
           </tbody>
         </table></div>
         <div className="balance-bar">
-          {editable && <button className="sm" style={{ marginRight: 'auto' }} onClick={() => setLines([...lines, { product: null, description: '', account: null, quantity: '1', unit_price: '0', discount_pct: '0', tax: null, cost_center: null }])}>+ Add line</button>}
-          <span>Untaxed <b>{money(totals.sub)}</b></span><span>Tax <b>{money(totals.tax)}</b></span><span>Total <b>{money(totals.sub + totals.tax, h.currency)}</b></span>
+          {editable && <button className="sm" style={{ marginRight: 'auto' }} onClick={() => setLines([...lines, { product: null, description: '', account: null, quantity: '1', unit_price: '0', discount_pct: '0', tax: null, withholding_tax: partnerWht, cost_center: null }])}>+ Add line</button>}
+          <span>Untaxed <b>{money(totals.sub)}</b></span><span>VAT <b>{money(totals.tax)}</b></span>
+          {totals.wht > 0 && <span>Withholding <b>({money(totals.wht)})</b></span>}
+          <span>{kind === 'invoices' ? 'Due from customer' : 'Payable to vendor'} <b>{money(totals.sub + totals.tax - totals.wht, h.currency)}</b></span>
           {d?.state === 'posted' && <span className="bad">Due {money(d.amount_residual, d.currency)}</span>}
         </div>
       </div>
@@ -151,6 +165,7 @@ export function DocEditor({ kind, doc, defaults, onClose, onChanged }: { kind: K
           { key: 'fx', title: 'FX difference', render: (a) => a.fx_entry_number || '—' },
           { key: 'amount', title: 'Amount', num: true, render: (a) => money(a.amount) }]} /></div>}
       {d?.state === 'posted' && h.currency !== company?.base_currency && <div className="muted">Booked at rate {num(d.rate)} → {money(d.amount_total_base, company?.base_currency)}</div>}
+      {d?.id && <Attachments type="billing.invoice" id={d.id} canEdit={can(`${cfg.p}.create`)} />}
       {showEntry && <EntryById id={d.journal_entry} onClose={() => setShowEntry(false)} />}
       {pay && <RegisterPayment base={cfg.base} doc={d} onClose={() => setPay(false)} onDone={(inv: any) => { setPay(false); setD(inv); onChanged() }} />}
     </Modal>
@@ -171,5 +186,26 @@ function RegisterPayment({ base, doc, onClose, onDone }: any) {
       <Field label="Bank reference / cheque no."><input value={f.reference} onChange={(e) => setF({ ...f, reference: e.target.value })} /></Field>
       <div className="muted">Foreign-currency differences are posted automatically to realised FX gain/loss.</div>
     </Modal>
+  )
+}
+
+const ETA_TONE: Record<string, string> = { valid: 'ok', submitted: 'info', pending: 'warn', invalid: 'bad', rejected: 'bad', failed: 'bad', cancel_requested: 'warn', cancelled: '' }
+function EtaPanel({ doc, onChanged }: { doc: any; onChanged: (d: any) => void }) {
+  const { can } = useAuth()
+  const { run } = useAction()
+  const e = doc.eta
+  const reload = async () => onChanged(await get(`/invoices/${doc.id}/`))
+  const act = async (path: string, body?: any, msg?: string) => { if (await run(() => post(`/eta-documents/${e.id}/${path}/`, body), msg)) reload() }
+  return (
+    <div className={`alert ${ETA_TONE[e.state] === 'bad' ? 'bad' : ETA_TONE[e.state] === 'ok' ? 'ok' : 'info'}`}>
+      <div className="row"><b>ETA e-invoice:</b> <span className={`badge ${ETA_TONE[e.state]}`}>{e.state.replace('_', ' ')}</span>
+        {e.uuid && <span className="mono" style={{ fontSize: 11 }}>UUID {e.uuid}</span>}<span style={{ flex: 1 }} />
+        {e.url && <a href={e.url} target="_blank" rel="noreferrer">Open on ETA portal ↗</a>}
+        {['submitted', 'cancel_requested'].includes(e.state) && <button className="sm" onClick={() => act('refresh', undefined, 'Status refreshed')}>Refresh status</button>}
+        {['invalid', 'rejected', 'failed'].includes(e.state) && can('einvoice.document.submit') && <button className="sm" onClick={() => act('resubmit', undefined, 'Resubmitted')}>Fix data & resubmit</button>}
+        {e.state === 'valid' && can('einvoice.document.cancel') && <button className="sm danger" onClick={() => { const reason = window.prompt('Cancellation reason (sent to ETA):'); if (reason) act('cancel', { reason }, 'Cancellation requested') }}>Cancel on ETA</button>}
+      </div>
+      {e.errors?.length > 0 && <pre className="mono" style={{ whiteSpace: 'pre-wrap', margin: '8px 0 0' }}>{JSON.stringify(e.errors, null, 1)}</pre>}
+    </div>
   )
 }

@@ -8,8 +8,8 @@ import { label, money } from '../lib/format'
 import { invalidateOptions, useFetch } from '../lib/hooks'
 
 const TYPES: Record<string, string[]> = {
-  asset: ['cash', 'bank', 'receivable', 'current_asset', 'inventory', 'prepayment', 'tax_input', 'fixed_asset', 'accumulated_depreciation', 'non_current_asset'],
-  liability: ['payable', 'current_liability', 'tax_output', 'grni', 'non_current_liability'],
+  asset: ['cash', 'bank', 'receivable', 'notes_receivable', 'current_asset', 'inventory', 'wip', 'prepayment', 'tax_input', 'wht_receivable', 'fixed_asset', 'accumulated_depreciation', 'non_current_asset'],
+  liability: ['payable', 'notes_payable', 'current_liability', 'tax_output', 'wht_payable', 'grni', 'non_current_liability'],
   equity: ['equity', 'retained_earnings'],
   income: ['revenue', 'other_income'],
   expense: ['cost_of_sales', 'expense', 'depreciation', 'other_expense'],
@@ -67,7 +67,7 @@ export default function Accounts() {
                 <tr key={n.id} className={`tree-row ${n.level === 1 ? 'lvl1' : n.is_group ? 'group' : ''}`} style={{ opacity: n.active ? 1 : .5 }}>
                   <td style={{ paddingLeft: 12 + (n.level - 1) * 22 }}>
                     <span className="tree-toggle" onClick={() => toggle(n)}>{n.children.length ? ((open[n.id] ?? n.level < 2) || q ? '▾' : '▸') : ''}</span>
-                    <span className="mono">{n.code}</span> &nbsp;{n.name}<span className="lvl-tag">L{n.level}</span>
+                    <span className="mono">{n.code}</span> &nbsp;{n.name}<span className="lvl-tag">L{n.level}</span>{n.name_ar && <span className="muted" dir="rtl" style={{ marginInlineStart: 10 }}>{n.name_ar}</span>}
                   </td>
                   <td>{n.is_group ? <span className="muted">Group · {CLASS_LABEL[n.account_class]}</span> : label(n.account_type)}</td>
                   <td>{n.is_control && <span className="badge info">Control</span>} {n.reconcilable && <span className="badge">Reconcilable</span>} {!n.active && <span className="badge bad">Inactive</span>}</td>
@@ -90,14 +90,14 @@ export default function Accounts() {
 
 function AccountForm({ initial, onClose, onSaved }: any) {
   const isNew = !initial.id
-  const [f, setF] = useState<any>({ code: '', name: '', account_type: 'expense', account_class: 'expense', active: true, is_control: false, requires_cost_center: false, currency: null, description: '', ...initial })
+  const [f, setF] = useState<any>({ code: '', name: '', name_ar: '', account_type: 'expense', account_class: 'expense', active: true, is_control: false, requires_cost_center: false, currency: null, description: '', cash_flow_category: '', ...initial })
   const { data: groups } = useFetch<any[]>('/accounts/', { account_type: 'group' })
   const { run, busy } = useAction()
   const set = (k: string, v: any) => setF((x: any) => ({ ...x, [k]: v }))
   const parent = groups?.find((g) => g.id === f.parent)
   const cls = parent?.account_class || f.account_class
   const save = async () => {
-    const body = { code: f.code, name: f.name, parent: f.parent || null, account_class: cls, account_type: f.account_type, is_control: f.is_control, requires_cost_center: f.requires_cost_center, currency: f.currency || null, description: f.description, active: f.active }
+    const body = { code: f.code, name: f.name, name_ar: f.name_ar, parent: f.parent || null, account_class: cls, account_type: f.account_type, is_control: f.is_control, requires_cost_center: f.requires_cost_center, currency: f.currency || null, description: f.description, active: f.active, cash_flow_category: f.cash_flow_category }
     const r = await run(() => (isNew ? post('/accounts/', body) : patch(`/accounts/${f.id}/`, body)), 'Account saved')
     if (r) onSaved()
   }
@@ -113,7 +113,9 @@ function AccountForm({ initial, onClose, onSaved }: any) {
         <Field label="Code" hint={parent ? `Must start with ${parent.code}` : 'Top-level classes use 1 digit'}><input className="mono" value={f.code} onChange={(e) => set('code', e.target.value.trim())} /></Field>
       </div>
       <Field label="Name"><input value={f.name} onChange={(e) => set('name', e.target.value)} /></Field>
+      <Field label="الاسم بالعربية"><input dir="rtl" value={f.name_ar || ''} onChange={(e) => set('name_ar', e.target.value)} /></Field>
       <div className="grid form">
+        <Field label="Cash-flow line" hint="Empty = from account type"><select value={f.cash_flow_category || ''} onChange={(e) => set('cash_flow_category', e.target.value)}><option value="">Automatic</option><option value="operating">Operating</option><option value="investing">Investing</option><option value="financing">Financing</option><option value="cash">Cash & equivalents</option><option value="none">Exclude</option></select></Field>
         {!parent && <Field label="Class"><select value={f.account_class} onChange={(e) => set('account_class', e.target.value)}>{Object.entries(CLASS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>}
         <Field label="Type" hint="Group = non-postable parent">
           <select value={f.account_type} onChange={(e) => set('account_type', e.target.value)}>

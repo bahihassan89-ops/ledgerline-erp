@@ -13,12 +13,22 @@ import Orders from './pages/Orders'
 import Partners from './pages/Partners'
 import Payments from './pages/Payments'
 import Reports from './pages/Reports'
+import Assets from './pages/Assets'
+import Banking from './pages/Banking'
+import Eta from './pages/Eta'
+import { LandedCosts } from './pages/Inventory'
+import Manufacturing from './pages/Manufacturing'
+import { Cheques } from './pages/Payments'
+import { CloseChecklist, Imports, Revaluation } from './pages/PeriodEnd'
+import { Budgets, Recurring } from './pages/Planning'
+import Print from './pages/Print'
 
 function Routed() {
   const { me, loading, can } = useAuth()
   if (loading) return <div className="empty">Loading…</div>
   if (!me) return <Login />
   if (!me.companies.length) return <div className="empty">Your account is not assigned to any company. Contact your administrator.</div>
+  if (window.location.pathname.startsWith('/print/')) return <Routes><Route path="/print/:kind/:id" element={<Print />} /></Routes>
   const home = can('ledger.report.view') ? <Dashboard /> : can('iam.user.view') ? <Navigate to="/users" /> : <Navigate to="/invoices" />
   return (
     <Layout>
@@ -43,6 +53,17 @@ function Routed() {
         <Route path="/users" element={<Users />} />
         <Route path="/integrations" element={<Integrations />} />
         <Route path="/audit" element={<Audit />} />
+        <Route path="/assets" element={<Assets />} />
+        <Route path="/banking" element={<Banking />} />
+        <Route path="/cheques" element={<Cheques />} />
+        <Route path="/eta" element={<Eta />} />
+        <Route path="/manufacturing" element={<Manufacturing />} />
+        <Route path="/landed-costs" element={<LandedCosts />} />
+        <Route path="/budgets" element={<Budgets />} />
+        <Route path="/recurring" element={<Recurring />} />
+        <Route path="/close" element={<CloseChecklist />} />
+        <Route path="/revaluation" element={<Revaluation />} />
+        <Route path="/imports" element={<Imports />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Layout>

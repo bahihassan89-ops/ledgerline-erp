@@ -92,7 +92,7 @@ function CompanyTab() {
   const ro = !can('core.company.manage')
   return <div className="card card-body stack">
     <div className="grid form">
-      {[['name', 'Trading name'], ['legal_name', 'Legal name'], ['tax_number', 'Tax / VAT number'], ['registration_number', 'Commercial registration'], ['country', 'Country']].map(([k, l]) => <Field key={k} label={l}><input value={data[k] || ''} onChange={(e) => set(k, e.target.value)} disabled={ro} /></Field>)}
+      {[['name', 'Trading name'], ['name_ar', 'الاسم التجاري بالعربية'], ['legal_name', 'Legal name'], ['tax_number', 'Tax registration no. (9 digits)'], ['registration_number', 'Commercial registration'], ['tax_office', 'Tax office (المأمورية)'], ['country', 'Country']].map(([k, l]) => <Field key={k} label={l}><input value={data[k] || ''} onChange={(e) => set(k, e.target.value)} disabled={ro} /></Field>)}
       <Field label="Base currency" hint="Fixed at company creation"><input value={data.base_currency} disabled /></Field>
       <Field label="Books locked up to" hint="No posting on or before this date"><input type="date" value={data.lock_date || ''} onChange={(e) => set('lock_date', e.target.value || null)} disabled={ro} /></Field>
       <Field label="Bill price tolerance %" hint="3-way match: allowed excess over PO price"><input className="num" value={data.bill_price_tolerance_pct} onChange={(e) => set('bill_price_tolerance_pct', e.target.value)} disabled={ro} /></Field>
@@ -122,8 +122,10 @@ function DefaultsTab() {
 type FieldDef = { k: string; l: string; t?: 'bool' | 'num' | 'date' | 'account' | 'currency' | 'select' | 'levels'; opts?: [string, string][]; f?: (a: any) => boolean; show?: (r: any) => any }
 const JOURNAL_FIELDS: FieldDef[] = [{ k: 'code', l: 'Code' }, { k: 'name', l: 'Name' }, { k: 'type', l: 'Type', t: 'select', opts: [['general', 'General'], ['bank', 'Bank'], ['cash', 'Cash'], ['sale', 'Sales'], ['purchase', 'Purchases'], ['inventory', 'Inventory']] },
   { k: 'default_account', l: 'Bank / cash account', t: 'account', f: (a) => ['bank', 'cash'].includes(a.account_type) }, { k: 'currency', l: 'Currency (optional)', t: 'currency' }, { k: 'allow_manual', l: 'Allow manual entries', t: 'bool' }, { k: 'active', l: 'Active', t: 'bool' }]
-const TAX_FIELDS: FieldDef[] = [{ k: 'code', l: 'Code' }, { k: 'name', l: 'Name' }, { k: 'scope', l: 'Scope', t: 'select', opts: [['sale', 'Sales'], ['purchase', 'Purchases']] }, { k: 'rate', l: 'Rate %', t: 'num' },
-  { k: 'price_include', l: 'Prices include tax', t: 'bool' }, { k: 'account', l: 'Tax account', t: 'account', f: (a) => ['tax_input', 'tax_output'].includes(a.account_type) }, { k: 'active', l: 'Active', t: 'bool' }]
+const TAX_FIELDS: FieldDef[] = [{ k: 'code', l: 'Code' }, { k: 'name', l: 'Name' }, { k: 'name_ar', l: 'الاسم بالعربية' }, { k: 'scope', l: 'Scope', t: 'select', opts: [['sale', 'Sales'], ['purchase', 'Purchases']] },
+  { k: 'kind', l: 'Kind', t: 'select', opts: [['vat', 'VAT (added)'], ['withholding', 'Withholding (deducted)']] }, { k: 'rate', l: 'Rate %', t: 'num' },
+  { k: 'eta_type', l: 'ETA tax type (T1, T4…)' }, { k: 'eta_subtype', l: 'ETA sub-type (V009, W004…)' }, { k: 'min_base', l: 'Withholding from amount (EGP)', t: 'num' },
+  { k: 'price_include', l: 'Prices include tax', t: 'bool' }, { k: 'account', l: 'Tax account', t: 'account', f: (a) => ['tax_input', 'tax_output', 'wht_payable', 'wht_receivable'].includes(a.account_type) }, { k: 'active', l: 'Active', t: 'bool' }]
 const RATE_FIELDS: FieldDef[] = [{ k: 'currency', l: 'Currency', t: 'currency' }, { k: 'date', l: 'Effective date', t: 'date' }, { k: 'rate', l: '1 unit = ? base currency', t: 'num' }]
 const RULE_FIELDS: FieldDef[] = [{ k: 'name', l: 'Name' }, { k: 'document_type', l: 'Document', t: 'select', opts: [['purchase_order', 'Purchase order'], ['sales_order', 'Sales order'], ['vendor_bill', 'Vendor bill'], ['customer_invoice', 'Customer invoice'], ['payment', 'Payment'], ['journal_entry', 'Manual journal entry']] },
   { k: 'min_amount', l: 'From amount (base)', t: 'num' }, { k: 'approver_levels', l: 'Approver levels in order', t: 'levels', show: (r) => r.approver_levels.map((l: number) => `L${l}`).join(' → ') }, { k: 'active', l: 'Active', t: 'bool' }]

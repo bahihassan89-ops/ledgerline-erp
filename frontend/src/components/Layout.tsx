@@ -13,8 +13,19 @@ const NAV: [string, Item[]][] = [
   ['Accounting', [
     { to: '/accounts', label: 'Chart of Accounts', ico: '⊞', perm: 'ledger.account.view' },
     { to: '/journal-entries', label: 'Journal Entries', ico: '≡', perm: 'ledger.entry.view' },
-    { to: '/periods', label: 'Fiscal Periods', ico: '◷', perm: 'ledger.entry.view' },
     { to: '/reports', label: 'Financial Reports', ico: '▤', perm: 'ledger.report.view' },
+    { to: '/budgets', label: 'Budgets', ico: '◔', perm: 'planning.budget.view' },
+    { to: '/recurring', label: 'Recurring Entries', ico: '↻', perm: ['planning.recurring.manage', 'ledger.entry.view'] },
+  ]],
+  ['Period End', [
+    { to: '/close', label: 'Close Checklist', ico: '☑', perm: 'ledger.report.view' },
+    { to: '/periods', label: 'Fiscal Periods', ico: '◷', perm: 'ledger.entry.view' },
+    { to: '/revaluation', label: 'FX Revaluation', ico: '¤', perm: 'ledger.report.view' },
+    { to: '/imports', label: 'Imports & Go-Live', ico: '⇪', perm: 'ledger.import.run' },
+  ]],
+  ['Treasury', [
+    { to: '/banking', label: 'Bank Reconciliation', ico: '⌂', perm: 'banking.statement.view' },
+    { to: '/cheques', label: 'Cheques', ico: '✎', perm: 'billing.payment.view' },
   ]],
   ['Receivables', [
     { to: '/sales-orders', label: 'Sales Orders', ico: '↗', perm: 'sales.order.view' },
@@ -31,6 +42,14 @@ const NAV: [string, Item[]][] = [
   ['Inventory', [
     { to: '/products', label: 'Products', ico: '▣', perm: 'inventory.product.view' },
     { to: '/stock', label: 'Stock & Moves', ico: '⇄', perm: 'inventory.stock.view' },
+    { to: '/landed-costs', label: 'Landed Costs', ico: '⚓', perm: 'inventory.valuation.view' },
+  ]],
+  ['Production', [
+    { to: '/manufacturing', label: 'Manufacturing', ico: '⚒', perm: 'manufacturing.order.view' },
+  ]],
+  ['Fixed Assets & Tax', [
+    { to: '/assets', label: 'Fixed Assets', ico: '▦', perm: 'assets.asset.view' },
+    { to: '/eta', label: 'E-Invoicing (ETA)', ico: '⎙', perm: 'einvoice.document.view' },
   ]],
   ['Administration', [
     { to: '/settings', label: 'Accounting Setup', ico: '⚙', perm: ['ledger.account.manage', 'ledger.tax.manage', 'core.company.manage'] },

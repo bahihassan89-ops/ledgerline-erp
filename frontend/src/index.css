@@ -108,6 +108,8 @@ table.data tr.group td { font-weight: 600; background: #fbfcfe; }
 table.data tr.lvl1 td { font-weight: 700; background: #f1f5fb; }
 table.lines td { padding: 5px 6px; }
 table.lines input, table.lines select { padding: 6px 8px; }
+table.lines select { min-width: 110px; }
+table.lines input.num { min-width: 64px; }
 .mono { font-family: var(--mono); font-size: 12.5px; }
 .muted { color: var(--muted); }
 .right { text-align: right; }

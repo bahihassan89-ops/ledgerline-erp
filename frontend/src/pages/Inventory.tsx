@@ -30,7 +30,7 @@ export function Products() {
 }
 
 function ProductForm({ initial, onClose, onSaved }: any) {
-  const [f, setF] = useState<any>({ sku: '', name: '', barcode: '', type: 'stock', category: null, uom: 'Unit', sale_price: '0', purchase_price: '0', sale_tax: null, purchase_tax: null, income_account: null, expense_account: null, reorder_level: '0', active: true, ...initial })
+  const [f, setF] = useState<any>({ sku: '', name: '', name_ar: '', barcode: '', type: 'stock', category: null, uom: 'Unit', sale_price: '0', purchase_price: '0', sale_tax: null, purchase_tax: null, income_account: null, expense_account: null, reorder_level: '0', active: true, eta_item_type: 'EGS', eta_item_code: '', eta_unit_type: 'EA', ...initial })
   const { run, busy } = useAction()
   const set = (k: string, v: any) => setF({ ...f, [k]: v })
   const save = async () => { const { id, qty_on_hand, average_cost, category_name, ...b } = f; void qty_on_hand; void average_cost; void category_name; const r = await run(() => (id ? patch(`/products/${id}/`, b) : post('/products/', b)), 'Saved'); if (r) onSaved() }
@@ -41,7 +41,11 @@ function ProductForm({ initial, onClose, onSaved }: any) {
         <Field label="Barcode"><input value={f.barcode} onChange={(e) => set('barcode', e.target.value)} /></Field>
       </div>
       <Field label="Name"><input value={f.name} onChange={(e) => set('name', e.target.value)} /></Field>
+      <Field label="الاسم بالعربية"><input dir="rtl" value={f.name_ar} onChange={(e) => set('name_ar', e.target.value)} /></Field>
       <div className="grid form">
+        <Field label="ETA item type"><select value={f.eta_item_type} onChange={(e) => set('eta_item_type', e.target.value)}><option value="EGS">EGS (internal code)</option><option value="GS1">GS1 (barcode)</option></select></Field>
+        <Field label="ETA item code" hint="As registered on the ETA portal"><input className="mono" value={f.eta_item_code} onChange={(e) => set('eta_item_code', e.target.value)} /></Field>
+        <Field label="ETA unit" hint="EA, KGM, LTR, MTR, BOX…"><input value={f.eta_unit_type} onChange={(e) => set('eta_unit_type', e.target.value)} /></Field>
         <Field label="Type"><select value={f.type} onChange={(e) => set('type', e.target.value)}><option value="stock">Stockable</option><option value="consumable">Consumable</option><option value="service">Service</option></select></Field>
         <Field label="Category" hint="Sets costing method and GL accounts"><SimpleSelect allowEmpty={false} path="/product-categories/" labelOf={(c) => `${c.name} (${c.cost_method})`} value={f.category} onChange={(v) => set('category', v)} /></Field>
         <Field label="Unit of measure"><input value={f.uom} onChange={(e) => set('uom', e.target.value)} /></Field>
@@ -106,5 +110,36 @@ function StockOp({ op, onClose, onDone }: any) {
       {op === 'opening' && <Field label="Offset account" hint="Usually Opening Balance Equity"><AccountSelect value={f.counter_account} onChange={(v) => set('counter_account', v)} filter={(a) => a.account_class === 'equity'} /></Field>}
       <Field label="Reason / reference"><input value={f.reason} onChange={(e) => set('reason', e.target.value)} /></Field>
     </Modal>
+  )
+}
+
+export function LandedCosts() {
+  const { can } = useAuth()
+  const { data, reload } = useFetch<any>('/landed-costs/')
+  const receipts = useFetch<any>('/stock-moves/', { move_type: 'receipt', page_size: 200 })
+  const [edit, setEdit] = useState<any>(null)
+  const { run, busy } = useAction()
+  const save = async (postIt: boolean) => {
+    const { id, number, state, journal_entry, entry_number, ...b } = edit; void number; void state; void journal_entry; void entry_number
+    const r = await run(() => (id ? patch(`/landed-costs/${id}/`, b) : post('/landed-costs/', b)))
+    if (r && postIt) await run(() => post(`/landed-costs/${r.id}/post/`), 'Landed cost allocated')
+    if (r) { setEdit(null); reload() }
+  }
+  return (
+    <>
+      <PageHead title="Landed Costs — تكاليف الاستيراد" sub="Customs duties, freight, clearance and insurance added to the cost of received goods. Book the service bills to 'Landed Costs Clearing' first."
+        actions={can('inventory.landed_cost.manage') && <button className="primary" onClick={() => setEdit({ date: today(), description: '', amount: '', allocation: 'value', counter_account: null, moves: [] })}>+ New landed cost</button>} />
+      <div className="card"><DataTable rows={data?.results} onRow={(r) => r.state === 'draft' && setEdit(r)} cols={[{ key: 'number', title: 'Number', render: (r) => r.number || 'Draft' }, { key: 'date', title: 'Date', render: (r) => fmtDate(r.date) },
+        { key: 'description', title: 'Description' }, { key: 'amount', title: 'Amount', num: true, render: (r) => money(r.amount) }, { key: 'moves', title: 'Receipts', num: true, render: (r) => r.moves.length },
+        { key: 'entry_number', title: 'Entry' }, { key: 'state', title: 'State', render: (r) => <span className={`badge ${r.state === 'posted' ? 'ok' : ''}`}>{r.state}</span> }]} /></div>
+      {edit && <Modal wide title="Landed cost" onClose={() => setEdit(null)} footer={<><button disabled={busy} onClick={() => save(false)}>Save draft</button><button className="primary" disabled={busy || !edit.moves.length || !num(edit.amount)} onClick={() => save(true)}>Allocate & post</button></>}>
+        <div className="grid form"><Field label="Date"><input type="date" value={edit.date} onChange={(e) => setEdit({ ...edit, date: e.target.value })} /></Field>
+          <Field label="Amount (base currency, excl. VAT)"><input className="num" value={edit.amount} onChange={(e) => setEdit({ ...edit, amount: e.target.value })} /></Field>
+          <Field label="Allocate"><select value={edit.allocation} onChange={(e) => setEdit({ ...edit, allocation: e.target.value })}><option value="value">By value</option><option value="quantity">By quantity</option></select></Field>
+          <Field label="Credit account" hint="Default: Landed Costs Clearing"><AccountSelect allowEmpty value={edit.counter_account} onChange={(v) => setEdit({ ...edit, counter_account: v })} /></Field></div>
+        <Field label="Description"><input value={edit.description} onChange={(e) => setEdit({ ...edit, description: e.target.value })} /></Field>
+        <Field label="Receipts the cost relates to"><div style={{ maxHeight: 240, overflow: 'auto' }}>{receipts.data?.results.map((m: any) => <label key={m.id} className="check"><input type="checkbox" checked={edit.moves.includes(m.id)} onChange={(e) => setEdit({ ...edit, moves: e.target.checked ? [...edit.moves, m.id] : edit.moves.filter((x: number) => x !== m.id) })} />{fmtDate(m.date)} · {m.number} · {m.product_sku} × {qty(m.quantity)} · {money(m.value)} · {m.reference}</label>)}</div></Field>
+      </Modal>}
+    </>
   )
 }

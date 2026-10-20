@@ -99,3 +99,28 @@ export async function list<T = any>(p: string, query?: Record<string, any>): Pro
   const d = await get<any>(p, { page_size: 500, ...query })
   return Array.isArray(d) ? d : d.results
 }
+
+/** Multipart upload (attachments, statement files). */
+export async function upload<T = any>(path: string, form: FormData): Promise<T> {
+  const doFetch = () => fetch(`/api${path}`, {
+    method: 'POST', body: form,
+    headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...(session.company() ? { 'X-Company': session.company()! } : {}) },
+  })
+  let r = await doFetch()
+  if (r.status === 401 && session.hasRefresh() && await refresh()) r = await doFetch()
+  const text = await r.text()
+  const data = text ? JSON.parse(text) : null
+  if (!r.ok) throw new ApiError(r.status, data)
+  return data
+}
+
+/** Authenticated file download (the server never exposes files publicly). */
+export async function downloadAuthed(path: string, filename: string) {
+  const r = await fetch(`/api${path}`, { headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...(session.company() ? { 'X-Company': session.company()! } : {}) } })
+  if (!r.ok) throw new ApiError(r.status, null)
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(await r.blob())
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(a.href)
+}

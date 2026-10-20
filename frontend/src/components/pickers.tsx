@@ -35,7 +35,9 @@ export function SimpleSelect({ path, value, onChange, disabled, allowEmpty, labe
 }
 
 export const TaxSelect = (p: P & { scope: 'sale' | 'purchase' }) =>
-  <SimpleSelect {...p} path="/taxes/" query={{ scope: p.scope, active: true }} labelOf={(t) => `${t.name}`} />
+  <SimpleSelect {...p} path="/taxes/" query={{ scope: p.scope, active: true, kind: 'vat' }} labelOf={(t) => `${t.name}`} />
+export const WhtSelect = (p: P & { scope: 'sale' | 'purchase' }) =>
+  <SimpleSelect {...p} path="/taxes/" query={{ scope: p.scope, active: true, kind: 'withholding' }} labelOf={(t) => `${t.name}`} />
 export const CurrencySelect = (p: P) =>
   <SimpleSelect {...p} allowEmpty={p.allowEmpty ?? false} path="/currencies/" labelOf={(c) => `${c.code} — ${c.name}`} />
 export const ProductSelect = (p: P) =>

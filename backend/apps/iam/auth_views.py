@@ -199,6 +199,9 @@ class MfaConfirmView(APIView):
 class RefreshView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    # Every page load exchanges the refresh token, so it needs its own (higher) limit than anonymous calls.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "refresh"
 
     def post(self, request):
         try:

@@ -7,7 +7,8 @@ import { useFetch } from '../lib/hooks'
 
 const REPORTS: [string, string][] = [
   ['trial-balance', 'Trial Balance'], ['balance-sheet', 'Balance Sheet'], ['income-statement', 'Income Statement'],
-  ['general-ledger', 'General Ledger'], ['ar-aging', 'AR Aging'], ['ap-aging', 'AP Aging'], ['vat', 'VAT Report'],
+  ['cash-flow', 'Cash Flow'], ['general-ledger', 'General Ledger'], ['ar-aging', 'AR Aging'], ['ap-aging', 'AP Aging'],
+  ['vat-return', 'VAT Return'], ['withholding', 'WHT Form 41'], ['withholding-customers', 'WHT by Customers'],
   ['subledger-reconciliation', 'Reconciliation'], ['inventory-valuation', 'Inventory Valuation'],
 ]
 
@@ -20,6 +21,12 @@ export default function Reports() {
   const query: any = pointInTime ? { as_of: p.as_of } : { date_from: p.date_from, date_to: p.date_to }
   if (['trial-balance', 'balance-sheet', 'income-statement'].includes(r) && p.level) query.level = p.level
   if (r === 'general-ledger') query.account = p.account
+  const compare = sp.get('compare') === '1'
+  if (compare && r === 'income-statement') {
+    const shift = (d: string) => `${Number(d.slice(0, 4)) - 1}${d.slice(4)}`
+    query.compare_from = shift(p.date_from); query.compare_to = shift(p.date_to)
+  }
+  if (compare && r === 'balance-sheet') query.compare_as_of = `${Number(p.as_of.slice(0, 4)) - 1}${p.as_of.slice(4)}`
   const ready = r !== 'general-ledger' || !!p.account
   const { data, loading, error } = useFetch<any>(ready ? `/reports/${r}/` : null, query)
   const { company } = useAuth()
@@ -34,6 +41,7 @@ export default function Reports() {
               <label className="row">To <input type="date" value={p.date_to} onChange={(e) => set('date_to', e.target.value)} /></label></>}
           {['trial-balance', 'balance-sheet', 'income-statement'].includes(r) && <select value={p.level} onChange={(e) => set('level', e.target.value)}>
             <option value="">All levels</option>{[1, 2, 3, 4].map((l) => <option key={l} value={l}>Up to level {l}</option>)}</select>}
+          {['balance-sheet', 'income-statement'].includes(r) && <label className="check"><input type="checkbox" checked={compare} onChange={(e) => set('compare', e.target.checked ? '1' : '')} />Compare with prior year</label>}
           {r === 'general-ledger' && <div style={{ minWidth: 320 }}><AccountSelect value={p.account ? Number(p.account) : null} onChange={(v) => set('account', v ? String(v) : '')} /></div>}
         </div>
         <div className="card-body">
@@ -68,9 +76,9 @@ function Report({ r, d, onDrill }: { r: string; d: any; onDrill: (id: number) =>
     return <div className="stack">
       <div className="row">{isBS ? <span className={`badge ${d.balanced ? 'ok' : 'bad'}`}>{d.balanced ? '✓ Assets = Liabilities + Equity' : '✗ Not balanced'}</span> : <span className="muted">{fmtDate(d.date_from)} – {fmtDate(d.date_to)}</span>}</div>
       {d.sections.map((s: any) => <div key={s.class}>
-        <table className="data"><thead><tr><th>{s.label}</th><th className="num">Amount</th></tr></thead>
+        <table className="data"><thead><tr><th>{s.label}</th><th className="num">Amount</th>{d.previous && <th className="num">Prior year</th>}</tr></thead>
           <tbody>{s.rows.map((x: any) => <tr key={x.account_id} className={x.level === 1 ? 'lvl1' : x.is_group ? 'group' : 'clickable'} onClick={() => !x.is_group && onDrill(x.account_id)}>
-            <td style={{ paddingLeft: 12 + (x.level - 1) * 18 }}><span className="mono">{x.code}</span> {x.name}</td><td className="num">{M(x.amount)}</td></tr>)}
+            <td style={{ paddingLeft: 12 + (x.level - 1) * 18 }}><span className="mono">{x.code}</span> {x.name}</td><td className="num">{M(x.amount)}</td>{d.previous && <td className="num muted">{M(x.previous)}</td>}</tr>)}
             {isBS && s.class === 'equity' && <tr><td style={{ paddingLeft: 30 }}><i>Current year result (not yet closed)</i></td><td className="num">{M(d.current_year_result)}</td></tr>}
           </tbody>
           <tfoot><tr><td>Total {s.label}</td><td className="num">{M(isBS && s.class === 'equity' ? d.total_equity : s.total)}</td></tr></tfoot></table></div>)}
@@ -97,6 +105,32 @@ function Report({ r, d, onDrill }: { r: string; d: any; onDrill: (id: number) =>
       <table className="data"><thead><tr><th>Partner</th>{d.buckets.map((b: string) => <th key={b} className="num">{B[b]}</th>)}<th className="num">Unapplied</th><th className="num">Total</th></tr></thead>
         <tbody>{d.rows.map((x: any) => <tr key={x.partner_id}><td>{x.code} {x.partner}</td>{d.buckets.map((b: string) => <td key={b} className="num" style={{ color: b !== 'current' && num(x[b]) > 0 ? 'var(--bad)' : undefined }}>{num(x[b]) ? M(x[b]) : '—'}</td>)}<td className="num">{x.unallocated ? `(${M(x.unallocated)})` : '—'}</td><td className="num"><b>{M(x.total)}</b></td></tr>)}</tbody>
         <tfoot><tr><td>Total</td>{d.buckets.map((b: string) => <td key={b} className="num">{M(d.totals[b])}</td>)}<td className="num">{M(d.totals.unallocated)}</td><td className="num">{M(d.totals.total)}</td></tr></tfoot></table>
+    </>
+  }
+  if (r === 'cash-flow') {
+    const Sec = ({ title, s, first }: any) => <><tr className="group"><td>{title}</td><td /></tr>{first}{s.rows.map((x: any, i: number) => <tr key={i}><td style={{ paddingLeft: 28 }}>{x.label}</td><td className="num">{M(x.amount)}</td></tr>)}<tr className="lvl1"><td>Net cash from {title.toLowerCase()}</td><td className="num">{M(s.total)}</td></tr></>
+    return <>
+      <div className="row" style={{ marginBottom: 10 }}><span className={`badge ${d.reconciled ? 'ok' : 'bad'}`}>{d.reconciled ? '✓ Reconciles to the actual change in cash' : `✗ Actual change ${M(d.actual_cash_change)}`}</span><span className="muted">Indirect method (EAS 4)</span></div>
+      <table className="data"><tbody>
+        <Sec title="Operating activities" s={d.operating} first={<tr><td style={{ paddingLeft: 28 }}>Net profit / (loss) for the period</td><td className="num">{M(d.net_profit)}</td></tr>} />
+        <Sec title="Investing activities" s={d.investing} /><Sec title="Financing activities" s={d.financing} />
+      </tbody><tfoot><tr><td>Net change in cash</td><td className="num">{M(d.net_change)}</td></tr><tr><td>Cash at beginning of period</td><td className="num">{M(d.opening_cash)}</td></tr><tr><td>Cash at end of period</td><td className="num">{M(d.closing_cash)}</td></tr></tfoot></table>
+    </>
+  }
+  if (r === 'vat-return') return <>
+    <table className="data"><thead><tr><th>Scope</th><th>Tax code</th><th>ETA</th><th className="num">Rate</th><th className="num">Taxable value</th><th className="num">VAT</th></tr></thead>
+      <tbody>{d.rows.map((x: any) => <tr key={x.code}><td>{x.scope === 'sale' ? 'Sales (output)' : 'Purchases (input)'}</td><td>{x.name}</td><td className="mono">{x.eta}</td><td className="num">{num(x.rate)}%</td><td className="num">{M(x.base)}</td><td className="num">{M(x.tax)}</td></tr>)}</tbody>
+      <tfoot><tr><td colSpan={5}>Output VAT</td><td className="num">{M(d.output_vat)}</td></tr><tr><td colSpan={5}>Input VAT</td><td className="num">({M(d.input_vat)})</td></tr><tr><td colSpan={5}>Net VAT {d.position}</td><td className="num">{M(d.net_vat)}</td></tr></tfoot></table>
+    <p className="muted">{d.note}</p>
+  </>
+  if (r === 'withholding' || r === 'withholding-customers') {
+    const cols = ['partner', 'tax_number', 'national_id', 'tax', 'eta_subtype', 'rate', 'base', 'withheld'].map((k) => ({ key: k, title: label(k) }))
+    return <>
+      <div className="row" style={{ marginBottom: 10 }}><span className={`badge ${num(d.total_withheld) === num(d.gl_movement) ? 'ok' : 'bad'}`}>{num(d.total_withheld) === num(d.gl_movement) ? '✓ Agrees with the GL account' : `✗ GL movement ${M(d.gl_movement)}`}</span><span style={{ flex: 1 }} /><Csv name={r} rows={d.rows} cols={cols} /></div>
+      <table className="data"><thead><tr><th>{r === 'withholding' ? 'Vendor' : 'Customer'}</th><th>Tax reg. no.</th><th>Type</th><th>ETA code</th><th className="num">Rate</th><th className="num">Base</th><th className="num">Withheld</th><th>Documents</th></tr></thead>
+        <tbody>{d.rows.map((x: any, i: number) => <tr key={i}><td>{x.partner}</td><td className="mono">{x.tax_number || x.national_id}</td><td>{x.tax}</td><td className="mono">{x.eta_subtype}</td><td className="num">{num(x.rate)}%</td><td className="num">{M(x.base)}</td><td className="num">{M(x.withheld)}</td><td className="muted">{x.documents.join(', ')}</td></tr>)}</tbody>
+        <tfoot><tr><td colSpan={6}>Total withheld</td><td className="num">{M(d.total_withheld)}</td><td /></tr></tfoot></table>
+      <p className="muted">{d.note}</p>
     </>
   }
   if (r === 'vat') return <>

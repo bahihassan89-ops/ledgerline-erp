@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import Attachments from '../components/Attachments'
 import { AccountSelect, CostCenterSelect, CurrencySelect, JournalSelect, PartnerSelect } from '../components/pickers'
 import { DataTable, Field, Modal, PageHead, StateBadge, useAction } from '../components/ui'
 import { del, post, put } from '../lib/api'
@@ -52,7 +53,7 @@ export function EntryEditor({ entry, onClose, onChanged }: { entry: any; onClose
   const { can, company } = useAuth()
   const [e, setE] = useState<any>(entry)
   const editable = !e || (e.state === 'draft' && !e.source_type)
-  const [h, setH] = useState<any>(() => ({ journal: e?.journal ?? null, date: e?.date ?? today(), reference: e?.reference ?? '', narration: e?.narration ?? '', currency: e?.currency ?? company?.base_currency, rate: e && e.currency !== company?.base_currency ? e.rate : '' }))
+  const [h, setH] = useState<any>(() => ({ journal: e?.journal ?? null, date: e?.date ?? today(), reference: e?.reference ?? '', narration: e?.narration ?? '', currency: e?.currency ?? company?.base_currency, rate: e && e.currency !== company?.base_currency ? e.rate : '', auto_reverse_date: e?.auto_reverse_date ?? null }))
   const [lines, setLines] = useState<Line[]>(() => e ? e.lines.map((l: any) => ({ account: l.account, partner: l.partner, description: l.description, cost_center: l.cost_center,
     debit: num(l.debit) ? String(num(e.currency === company?.base_currency ? l.debit : l.amount_currency)) : '', credit: num(l.credit) ? String(Math.abs(num(e.currency === company?.base_currency ? l.credit : l.amount_currency))) : '' })) : [blank(), blank()])
   const accounts = useOptions<any>('/accounts/')
@@ -97,12 +98,14 @@ export function EntryEditor({ entry, onClose, onChanged }: { entry: any; onClose
       {e?.source_type && <div className="alert info">Generated automatically by a {label(e.source_type)} — change the source document instead.</div>}
       {e?.reversal_of_number && <div className="alert info">This is the reversal of {e.reversal_of_number}.</div>}
       {e?.reversed_by && <div className="alert warn">Reversed by {e.reversed_by.number}.</div>}
+      {e?.id && <Attachments type="ledger.journalentry" id={e.id} canEdit={can('ledger.entry.create')} />}
       <div className="grid form">
         <Field label="Journal"><JournalSelect types={['general', 'bank', 'cash']} value={h.journal} onChange={(v) => setH({ ...h, journal: v })} disabled={!editable} /></Field>
         <Field label="Date"><input type="date" value={h.date} onChange={(ev) => setH({ ...h, date: ev.target.value })} disabled={!editable} /></Field>
         <Field label="Currency"><CurrencySelect value={h.currency} onChange={(v) => setH({ ...h, currency: v })} disabled={!editable} /></Field>
         {foreign && <Field label={`Rate (1 ${h.currency} = ? ${company?.base_currency})`} hint="Leave empty to use the rate table"><input className="num" value={h.rate} onChange={(ev) => setH({ ...h, rate: ev.target.value })} disabled={!editable} /></Field>}
         <Field label="Reference"><input value={h.reference} onChange={(ev) => setH({ ...h, reference: ev.target.value })} disabled={!editable} /></Field>
+        <Field label="Auto-reverse on" hint="Accruals: reversal posted automatically"><input type="date" value={h.auto_reverse_date || ''} onChange={(ev) => setH({ ...h, auto_reverse_date: ev.target.value || null })} disabled={!editable} /></Field>
       </div>
       <Field label="Narration (explain the entry for auditors)"><textarea rows={2} value={h.narration} onChange={(ev) => setH({ ...h, narration: ev.target.value })} disabled={!editable} /></Field>
       <div className="card">

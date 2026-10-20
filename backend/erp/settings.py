@@ -150,6 +150,7 @@ REST_FRAMEWORK = {
         "user": env("ERP_THROTTLE_USER", "2000/hour"),
         "anon": env("ERP_THROTTLE_ANON", "60/hour"),
         "login": env("ERP_THROTTLE_LOGIN", "10/minute"),
+        "refresh": env("ERP_THROTTLE_REFRESH", "600/hour"),
     },
     "COERCE_DECIMAL_TO_STRING": True,  # never send money as float
 }
