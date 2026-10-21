@@ -44,7 +44,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     evs.forEach((e) => window.addEventListener(e, reset))
     reset()
     return () => { clearTimeout(t); evs.forEach((e) => window.removeEventListener(e, reset)) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me])
 
   const company = me?.companies.find((c) => c.id === companyId) || me?.companies[0] || null

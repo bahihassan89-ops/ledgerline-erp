@@ -28,6 +28,8 @@ DEBUG = env_bool("ERP_DEBUG", ERP_ENV == "dev")
 SECRET_KEY = env("ERP_SECRET_KEY", "dev-insecure-key-change-me-0123456789-abcdefghijklmnop" if ERP_ENV != "prod" else None)
 # Separate key used to encrypt secrets at rest (MFA seeds, webhook secrets).
 FIELD_ENCRYPTION_KEY = env("ERP_FIELD_ENCRYPTION_KEY", "dev-field-key-change-me" if ERP_ENV != "prod" else None)
+# Reverse proxies in front of Django (docker-compose: Caddy → nginx = 2). 0 = trust only REMOTE_ADDR.
+ERP_TRUSTED_PROXIES = int(env("ERP_TRUSTED_PROXIES", "0"))
 ALLOWED_HOSTS = env_list("ERP_ALLOWED_HOSTS", "localhost,127.0.0.1")
 
 INSTALLED_APPS = [
@@ -146,6 +148,7 @@ REST_FRAMEWORK = {
         "rest_framework.throttling.UserRateThrottle",
         "rest_framework.throttling.AnonRateThrottle",
     ],
+    "NUM_PROXIES": ERP_TRUSTED_PROXIES,  # 0 = throttle by REMOTE_ADDR, never by a client-supplied header
     "DEFAULT_THROTTLE_RATES": {
         "user": env("ERP_THROTTLE_USER", "2000/hour"),
         "anon": env("ERP_THROTTLE_ANON", "60/hour"),

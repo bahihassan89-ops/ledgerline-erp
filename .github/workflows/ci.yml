@@ -1,0 +1,50 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_DB: erp, POSTGRES_USER: erp, POSTGRES_PASSWORD: erp_dev_pw }
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-retries 10
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13", cache: pip, cache-dependency-path: backend/requirements.txt }
+      - run: pip install -r requirements.txt
+      - run: python manage.py makemigrations --check --dry-run
+      - run: python -m pytest
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: frontend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  deploy-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell scripts parse
+        run: bash -n install.sh && bash -n deploy/backup/backup.sh && sh -n deploy/restore.sh
+      - name: Compose file is valid
+        run: |
+          printf 'ERP_DOMAIN=ci.example\nERP_SECRET_KEY=x\nERP_FIELD_ENCRYPTION_KEY=x\nDB_OWNER_PASSWORD=x\nERP_DB_PASSWORD=x\nBACKUP_PASSPHRASE=x\n' > .env
+          docker compose config --quiet
+      - name: Images build
+        run: docker compose build

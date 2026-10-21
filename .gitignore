@@ -8,3 +8,4 @@ frontend/dist/
 *.log
 backend/media/
 *.zip
+backups/

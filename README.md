@@ -6,6 +6,7 @@ application **and** in the PostgreSQL database itself.
 
 * **Accounting handbook (Egypt edition)** → [`docs/ACCOUNTING_DESIGN.md`](docs/ACCOUNTING_DESIGN.md) — every rule, entry, control and report; start here
 * **Security model** → [`docs/SECURITY.md`](docs/SECURITY.md)
+* **Installing & running it** → [`docs/OPERATIONS.md`](docs/OPERATIONS.md)
 * **API** → `http://localhost:8000/api/docs/` (interactive OpenAPI) once running
 
 ## What's included
@@ -89,26 +90,34 @@ categories, and the current fiscal year.
 ```bash
 cd backend && .venv/bin/python -m pytest tests
 ```
-68 tests cover: double-entry and period rules, DB triggers (immutability, deferred balance check,
+71 tests cover: double-entry and period rules, DB triggers (immutability, deferred balance check,
 append-only audit), FIFO/AVCO costing and rounding, procure-to-pay with 3-way match and price
 variance, order-to-cash with credit notes and aging, FX loss, approvals & SoD, approval limits,
 cross-company isolation, privilege-escalation attempts, login lockout, MFA with replay protection,
 refresh-token rotation, API-key scope capping, idempotent retries, and every Egyptian/new module
 (VAT/WHT postings and reports, ETA build/serialize/sign/submit/cancel, cheques, bank reconciliation,
 depreciation & disposal, FX revaluation, returns, landed costs, budgets, recurring entries, imports,
-manufacturing costing, cash flow, close checklist, attachments).
+manufacturing costing, cash flow, close checklist, attachments, first-run bootstrap, proxy-aware client IPs).
 
 ## Production
 
+On a fresh Ubuntu 22.04/24.04 server (2 vCPU, 4 GB RAM, 40 GB disk is plenty to start):
+
 ```bash
-cp .env.example .env     # fill in long random secrets
-docker compose up -d --build
+git clone https://github.com/bahihassan89-ops/ledgerline-erp && cd ledgerline-erp
+sudo ./install.sh
 ```
+The installer sets up Docker, generates every secret into `.env`, starts the stack behind automatic
+HTTPS (Caddy + Let's Encrypt), creates your first company with the Egyptian profile and its
+administrator, and takes the first encrypted backup. Run it again after `git pull` to upgrade;
+it backs up first. Day-to-day running, backups, restore and recovery:
+**[`docs/OPERATIONS.md`](docs/OPERATIONS.md)**.
+
+* Only Caddy (ports 80/443) is exposed; the database, API and workers sit on a private network.
 * `migrate` runs as the schema owner, then `apply_db_grants` restricts the app role.
-* `backend` and `webhooks` connect as `erp_app` (DML only — cannot drop triggers, cannot alter the audit log).
-* Terminate TLS in front of the `frontend` container (port 8080). HSTS is set.
+* All app processes connect as `erp_app` (DML only: cannot drop triggers, cannot alter the audit log).
 * Settings refuse to start in `ERP_ENV=prod` with default/short secrets or `DEBUG` on.
-* Back up PostgreSQL with point-in-time recovery (WAL archiving); test restores regularly.
+* CI (`.github/workflows/ci.yml`) runs the tests, lint, build and a compose check on every push.
 
 ## Integrating other apps
 

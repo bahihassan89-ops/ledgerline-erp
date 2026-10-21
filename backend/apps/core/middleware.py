@@ -4,12 +4,14 @@ from . import context
 
 
 def client_ip(request):
-    # Only trust X-Forwarded-For when explicitly behind a configured proxy.
+    # Only trust X-Forwarded-For when behind a known number of proxies; the client is the entry the
+    # outermost proxy appended (anything further left can be forged by the client).
     from django.conf import settings
-    if getattr(settings, "ERP_TRUST_PROXY", False):
-        fwd = request.META.get("HTTP_X_FORWARDED_FOR")
-        if fwd:
-            return fwd.split(",")[0].strip()
+    n = getattr(settings, "ERP_TRUSTED_PROXIES", 0)
+    if n:
+        hops = [h.strip() for h in request.META.get("HTTP_X_FORWARDED_FOR", "").split(",") if h.strip()]
+        if len(hops) >= n:
+            return hops[-n]
     return request.META.get("REMOTE_ADDR")
 
 

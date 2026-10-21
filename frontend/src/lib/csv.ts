@@ -2,7 +2,7 @@
 export function parseCSV(text: string): Record<string, string>[] {
   const rows: string[][] = []
   let row: string[] = [], cell = '', q = false
-  const t = text.replace(/^﻿/, '')
+  const t = text.replace(/^\uFEFF/, '')
   for (let i = 0; i < t.length; i++) {
     const ch = t[i]
     if (q) {

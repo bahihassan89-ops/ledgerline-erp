@@ -1,0 +1,11 @@
+# Public entry point. Caddy obtains and renews the HTTPS certificate for ERP_DOMAIN automatically
+# (Let's Encrypt). For an internal server with no public DNS, set ERP_TLS=internal in .env (otherwise ERP_TLS is the email Let's Encrypt uses for expiry notices).
+{$ERP_DOMAIN} {
+	tls {$ERP_TLS}
+	encode zstd gzip
+	reverse_proxy frontend:80
+	log {
+		output stdout
+		format console
+	}
+}

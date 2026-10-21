@@ -1,4 +1,27 @@
-# Production-style stack. Put TLS in front (load balancer / Caddy / Traefik) and set real secrets in .env
+# Production stack. Install with ./install.sh (creates .env with random secrets), or see docs/OPERATIONS.md.
+#   Internet ─443─▶ caddy (HTTPS) ─▶ frontend (nginx: SPA + security headers) ─▶ backend (gunicorn/Django) ─▶ db
+# Only caddy publishes ports. Everything else is on the private compose network.
+x-app-env: &env
+  ERP_ENV: prod
+  ERP_SECRET_KEY: ${ERP_SECRET_KEY:?set ERP_SECRET_KEY}
+  ERP_FIELD_ENCRYPTION_KEY: ${ERP_FIELD_ENCRYPTION_KEY:?set ERP_FIELD_ENCRYPTION_KEY}
+  ERP_ALLOWED_HOSTS: ${ERP_DOMAIN:?set ERP_DOMAIN},localhost,backend
+  ERP_CORS_ORIGINS: https://${ERP_DOMAIN}
+  ERP_TRUSTED_PROXIES: "2"          # caddy → nginx
+  ERP_DB_HOST: db
+  ERP_DB_NAME: erp
+  ERP_DB_USER: erp_app              # the app runs with DML-only rights (see deploy/db-init.sh)
+  ERP_DB_PASSWORD: ${ERP_DB_PASSWORD:?set ERP_DB_PASSWORD}
+  ERP_MEDIA_ROOT: /app/media
+
+x-worker: &worker
+  build: ./backend
+  image: ledgerline-backend
+  environment: *env
+  depends_on: { migrate: { condition: service_completed_successfully } }
+  restart: unless-stopped
+  logging: &logging { driver: json-file, options: { max-size: "20m", max-file: "5" } }
+
 services:
   db:
     image: postgres:16-alpine
@@ -6,75 +29,86 @@ services:
       POSTGRES_DB: erp
       POSTGRES_USER: erp_owner
       POSTGRES_PASSWORD: ${DB_OWNER_PASSWORD:?set DB_OWNER_PASSWORD}
-      ERP_APP_PASSWORD: ${ERP_DB_PASSWORD:?set ERP_DB_PASSWORD}
+      ERP_APP_PASSWORD: ${ERP_DB_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./deploy/db-init.sh:/docker-entrypoint-initdb.d/10-app-role.sh:ro
-    healthcheck: { test: ["CMD-SHELL", "pg_isready -U erp_owner -d erp"], interval: 5s, retries: 10 }
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U erp_owner -d erp"], interval: 5s, retries: 20 }
     restart: unless-stopped
+    logging: *logging
 
   migrate:
     build: ./backend
+    image: ledgerline-backend
     command: sh -c "python manage.py migrate --noinput && python manage.py apply_db_grants"
-    environment: &env
-      ERP_ENV: prod
-      ERP_SECRET_KEY: ${ERP_SECRET_KEY:?set ERP_SECRET_KEY}
-      ERP_FIELD_ENCRYPTION_KEY: ${ERP_FIELD_ENCRYPTION_KEY:?set ERP_FIELD_ENCRYPTION_KEY}
-      ERP_ALLOWED_HOSTS: ${ERP_ALLOWED_HOSTS:-localhost}
-      ERP_CORS_ORIGINS: ${ERP_CORS_ORIGINS:-https://localhost}
-      ERP_DB_HOST: db
-      ERP_DB_NAME: erp
+    environment:
+      <<: *env
       ERP_DB_USER: erp_owner          # migrations run as the schema owner
       ERP_DB_PASSWORD: ${DB_OWNER_PASSWORD}
     depends_on: { db: { condition: service_healthy } }
+    logging: *logging
 
   backend:
-    build: ./backend
-    environment:
-      <<: *env
-      ERP_DB_USER: erp_app            # the app runs with DML-only rights (see deploy/db-init.sh)
-      ERP_DB_PASSWORD: ${ERP_DB_PASSWORD}
+    <<: *worker
     volumes:
       - media:/app/media
-    depends_on: { migrate: { condition: service_completed_successfully } }
-    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(urllib.request.urlopen(urllib.request.Request('http://localhost:8000/health/', headers={'X-Forwarded-Proto': 'https'})).status != 200)"]
+      interval: 15s
+      retries: 5
 
   webhooks:
-    build: ./backend
+    <<: *worker
     command: python manage.py deliver_webhooks --loop
-    environment:
-      <<: *env
-      ERP_DB_USER: erp_app
-      ERP_DB_PASSWORD: ${ERP_DB_PASSWORD}
-    depends_on: { migrate: { condition: service_completed_successfully } }
-    restart: unless-stopped
 
   eta:
-    build: ./backend
+    <<: *worker
     command: python manage.py eta_sync --loop --received
-    environment:
-      <<: *env
-      ERP_DB_USER: erp_app
-      ERP_DB_PASSWORD: ${ERP_DB_PASSWORD}
-    depends_on: { migrate: { condition: service_completed_successfully } }
-    restart: unless-stopped
 
   scheduler:
-    build: ./backend
+    <<: *worker
     command: sh -c "while true; do python manage.py run_recurring; sleep 3600; done"
-    environment:
-      <<: *env
-      ERP_DB_USER: erp_app
-      ERP_DB_PASSWORD: ${ERP_DB_PASSWORD}
-    depends_on: { migrate: { condition: service_completed_successfully } }
-    restart: unless-stopped
 
   frontend:
     build: ./frontend
-    ports: ["8080:80"]
-    depends_on: [backend]
+    depends_on: { backend: { condition: service_healthy } }
     restart: unless-stopped
+    logging: *logging
+
+  caddy:
+    image: caddy:2.10-alpine
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      ERP_DOMAIN: ${ERP_DOMAIN}
+      ERP_TLS: ${ERP_TLS:-internal}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [frontend]
+    restart: unless-stopped
+    logging: *logging
+
+  backup:
+    build: ./deploy/backup
+    command: loop
+    environment:
+      PGUSER: erp_owner
+      PGDATABASE: erp
+      PGPASSWORD: ${DB_OWNER_PASSWORD}
+      BACKUP_PASSPHRASE: ${BACKUP_PASSPHRASE:?set BACKUP_PASSPHRASE}
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
+      BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-14}
+      BACKUP_KEEP_MONTHS: ${BACKUP_KEEP_MONTHS:-12}
+    volumes:
+      - ./backups:/backups           # copy this folder off the server (see docs/OPERATIONS.md)
+      - media:/media
+    depends_on: { db: { condition: service_healthy } }
+    restart: unless-stopped
+    logging: *logging
 
 volumes:
   pgdata:
-  media:     # attachments — include in backups
+  media:        # attachments: included in the backups
+  caddy_data:   # TLS certificates
+  caddy_config:
