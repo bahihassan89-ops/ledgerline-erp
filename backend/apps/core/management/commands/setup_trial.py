@@ -3,7 +3,9 @@
 import secrets
 
 from django.core.management import call_command
-from django.core.management.base import BaseCommand
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+from django.core.management.base import BaseCommand, CommandError
 
 from apps.iam.models import User
 
@@ -13,15 +15,24 @@ from .seed_demo import DEMO_PASSWORD, USERS
 class Command(BaseCommand):
     help = "Load the Egyptian demo company with one user per role, each with a random password"
 
-    def handle(self, *a, **o):
+    def add_arguments(self, p):
+        p.add_argument("--password", default="",
+                       help="Use this password for every trial user instead of random ones (unattended installs)")
+
+    def handle(self, *a, password="", **o):
+        if password:
+            try:
+                validate_password(password)
+            except ValidationError as e:
+                raise CommandError("Trial password rejected: " + " ".join(e.messages))
         call_command("seed_demo_eg", stdout=self.stdout)
         rows = []
         for uname, role, *_ in USERS:
             u = User.objects.filter(username=uname).first()
             if not u:
                 continue
-            if not u.password or u.check_password(DEMO_PASSWORD):
-                pw = secrets.token_urlsafe(10)
+            if password or not u.password or u.check_password(DEMO_PASSWORD):
+                pw = password or secrets.token_urlsafe(10)
                 u.set_password(pw)
                 u.save()
             else:

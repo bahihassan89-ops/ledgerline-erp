@@ -2,7 +2,7 @@
 
 A step-by-step guide to putting a **trial** copy of Ledgerline ERP on the internet at no cost, so the
 team can test it from anywhere before you choose a paid provider. About 30–45 minutes, most of it
-waiting. No technical background needed: every command is copy-paste.
+waiting. No technical background needed and nothing to type: the server installs itself.
 
 > **Demo data only.** The trial server is for testing with the demo company (Nile Industries SAE).
 > Do not enter real customer, employee or financial data: Oracle's free regions are outside Egypt,
@@ -19,7 +19,7 @@ waiting. No technical background needed: every command is copy-paste.
    "Always Free" resources. You may see a small temporary hold that is released.
 4. Wait for the "account ready" email (usually minutes, sometimes an hour), then sign in.
 
-## Step 2: Create the server (10 min)
+## Step 2: Create the server, which installs itself (10 min of clicking)
 
 1. In the Oracle console: **☰ menu → Compute → Instances → Create instance**.
 2. **Name:** `ledgerline-trial`.
@@ -29,10 +29,15 @@ waiting. No technical background needed: every command is copy-paste.
      (The label "Always Free-eligible" must be visible.)
 4. **Networking:** keep "Create new virtual cloud network" and "Create new public subnet", and make
    sure **Assign a public IPv4 address** is on.
-5. **Add SSH keys:** choose **Generate a key pair for me** and click **Save private key**.
-   Keep this file safe: it is the key to your server.
-6. Click **Create**. After a minute or two the status turns green **RUNNING**. Copy the
-   **Public IP address** shown on the page (e.g. `130.61.25.17`).
+5. **Add SSH keys:** choose **Generate a key pair for me** and click **Save private key**. You will
+   probably never need it, but keep the file: it is the emergency key to your server.
+6. **The self-install script:** click **Show advanced options** (or **Advanced options**) →
+   **Management** → **Initialization script** → **Paste cloud-init script**, and paste the whole
+   contents of [`deploy/oracle-cloud-init.sh`](../deploy/oracle-cloud-init.sh) with your two values
+   filled in at the top: your **email** and the **trial password** every tester will use
+   (12+ characters with upper and lower case, a digit and a symbol).
+7. Click **Create**. After a minute or two the status turns green **RUNNING**. Note the
+   **Public IP address** (e.g. `130.61.25.17`).
 
 > **"Out of capacity" error?** Free servers are popular. Try again with **1 OCPU / 6 GB**, choose a
 > different **Availability domain** in the Placement section, or retry a few hours later.
@@ -45,42 +50,29 @@ waiting. No technical background needed: every command is copy-paste.
 3. Fill in: **Source CIDR** `0.0.0.0/0`, **IP Protocol** `TCP`, **Destination Port Range** `80,443`.
    Click **Add Ingress Rules**.
 
-(The installer opens the same ports in the server's own firewall automatically.)
+(The server opens the same ports in its own firewall automatically.)
 
-## Step 4: Connect to the server (2 min)
+## Step 4: Wait, then open it (15–20 min)
 
-**Windows 10/11:** open **PowerShell**. **Mac:** open **Terminal**. Then (replace the file
-name and IP with yours):
+The server is now downloading and building everything by itself. After 15–20 minutes, open your
+address in the browser. It is your public IP with dashes instead of dots, followed by `.sslip.io`:
+
+**IP `130.61.25.17` → `https://130-61-25-17.sslip.io`**
+
+Sign in with any trial user name (table below) and the trial password you chose.
+If the page does not load yet, wait 5 more minutes and refresh. If it still does not work after
+30 minutes, see "If something goes wrong" at the end.
+
+## Step 5 (optional): Connecting to the server yourself
+
+Only needed for updates and troubleshooting. **Windows 10/11:** open **PowerShell**. **Mac:** open
+**Terminal**. Then (replace the file name and IP with yours):
 
 ```bash
 ssh -i Downloads/ssh-key-2026-10-21.key ubuntu@130.61.25.17
 ```
 * Mac only, if it says the key's permissions are too open: run `chmod 600 Downloads/ssh-key-*.key` first.
 * Answer `yes` to the "authenticity of host" question the first time.
-
-You are in when the prompt shows `ubuntu@ledgerline-trial`.
-
-## Step 5: Install the trial (15 min, mostly waiting)
-
-Paste this and press Enter:
-
-```bash
-git clone https://github.com/bahihassan89-ops/ledgerline-erp && cd ledgerline-erp && sudo ./install.sh --trial
-```
-
-It asks three questions:
-
-| Question | What to answer |
-|---|---|
-| Web address | Press **Enter** to accept the suggested address ending in **.sslip.io**. It points to your server automatically, so no domain is needed for the trial. |
-| Email for HTTPS certificate notices | Your email. |
-| Backup passphrase | Press **Enter** (one is generated). |
-
-The first install takes 10–15 minutes. At the end it prints a table of **user names and passwords**
-(one per role) and the web address. Copy the table somewhere safe (it is also saved on the server:
-`sudo cat ~/ledgerline-erp/trial-users.txt`).
-
-**Open the web address in your browser** (e.g. `https://130-61-25-17.sslip.io`) and sign in.
 
 ## Step 6: Give the team access
 
@@ -94,7 +86,8 @@ The first install takes 10–15 minutes. At the end it prints a table of **user 
 | `auditor` | Auditor | Read-only: reports and audit log |
 | `admin` | System Administrator | Users and roles (no accounting access, by design) |
 
-Send each tester the web address plus the login for the role they should try. To give someone
+All trial users share the trial password you chose. Send each tester the web address plus the
+user name for the role they should try. To give someone
 their own account, sign in as `admin` → **Users** → **+ New user**.
 
 Each Controller/CFO login is tied to one phone's authenticator app. If a second person needs that
@@ -102,19 +95,19 @@ role, create a separate user for them, or have `admin` click **Reset MFA** on th
 
 ## Updating the trial after changes
 
-When changes have been made (e.g. after Ibrahim's review), connect as in Step 4 and run:
+When changes have been made (e.g. after Ibrahim's review), connect as in Step 5 and run:
 
 ```bash
-cd ledgerline-erp && git pull && sudo ./install.sh
+cd /opt/ledgerline-erp && sudo git pull && sudo ./install.sh
 ```
 It backs up, updates and restarts in a few minutes. Data entered by testers is kept.
 
-**Start over with fresh demo data:** `cd ledgerline-erp && sudo docker compose down -v && sudo rm .env trial-users.txt && sudo ./install.sh --trial`
+**Start over with fresh demo data:** `cd /opt/ledgerline-erp && sudo docker compose down -v && sudo rm .env trial-users.txt && sudo ./install.sh --trial` (prints new random passwords).
 
 ## Good to know
 
 * **Idle servers:** Oracle may reclaim Always Free servers that sit almost unused for 7 days. Regular
-  testing keeps it alive. If it is reclaimed, repeat Steps 2–5 (15 minutes).
+  testing keeps it alive. If it is reclaimed, repeat Steps 2–4.
 * **Cost:** nothing, as long as you stay within Always Free (the shape above is). You can set a budget
   alert at **☰ → Billing → Budgets** for peace of mind.
 * **Private repository:** if the GitHub repository is made private, the server needs a token to
@@ -123,3 +116,16 @@ It backs up, updates and restarts in a few minutes. Data entered by testers is k
   `git clone https://<token>@github.com/bahihassan89-ops/ledgerline-erp`.
 * **Moving to production later:** install fresh on the chosen provider with `sudo ./install.sh`
   (no `--trial`), following [`OPERATIONS.md`](OPERATIONS.md). Nothing from the trial carries over.
+
+## If something goes wrong
+
+Connect as in Step 5 and look at the installation log:
+
+```bash
+sudo tail -30 /var/log/ledgerline-install.log
+```
+The last line is `LEDGERLINE READY: https://…` when it finished. Anything else, copy the last
+30 lines and send them to whoever maintains the system. Common causes: the ports in Step 3 are not
+open yet (the HTTPS certificate cannot be issued until they are; it retries by itself), or the
+trial password did not meet the rules (fix it with
+`cd /opt/ledgerline-erp && sudo docker compose exec backend python manage.py setup_trial --password 'New-Password-2026!'`).

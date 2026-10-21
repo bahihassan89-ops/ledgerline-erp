@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Shell scripts parse
-        run: bash -n install.sh && bash -n deploy/backup/backup.sh && sh -n deploy/restore.sh
+        run: bash -n install.sh && bash -n deploy/oracle-cloud-init.sh && bash -n deploy/backup/backup.sh && sh -n deploy/restore.sh
       - name: Compose file is valid
         run: |
           printf 'ERP_DOMAIN=ci.example\nERP_SECRET_KEY=x\nERP_FIELD_ENCRYPTION_KEY=x\nDB_OWNER_PASSWORD=x\nERP_DB_PASSWORD=x\nBACKUP_PASSPHRASE=x\n' > .env

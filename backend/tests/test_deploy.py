@@ -58,3 +58,16 @@ def test_setup_trial_gives_every_demo_user_a_private_working_password():
         user = User.objects.get(username=uname)
         assert user.check_password(pw), uname
         assert not user.check_password(DEMO_PASSWORD), uname
+
+
+@pytest.mark.django_db
+def test_setup_trial_with_chosen_password():
+    from django.core.management.base import CommandError
+
+    with pytest.raises(CommandError):
+        call_command("setup_trial", password="weak", stdout=StringIO())
+    call_command("setup_trial", password="Nile-Trial-2026!x", stdout=StringIO())
+    assert User.objects.get(username="cfo").check_password("Nile-Trial-2026!x")
+    assert User.objects.get(username="clerk").check_password("Nile-Trial-2026!x")
+    call_command("setup_trial", password="Reset-Trial-2026!y", stdout=StringIO())  # explicit reset always applies
+    assert User.objects.get(username="cfo").check_password("Reset-Trial-2026!y")

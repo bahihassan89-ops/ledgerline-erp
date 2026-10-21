@@ -8,7 +8,8 @@
 # builds and starts the stack behind automatic HTTPS, creates the first company and administrator,
 # and prints the one-time admin password. Re-running it is safe: it upgrades to the checked-out code.
 #
-# Non-interactive: set ERP_DOMAIN, ERP_TLS, COMPANY_NAME, COMPANY_NAME_AR, COMPANY_CODE, ADMIN_EMAIL.
+# Non-interactive: set ERP_DOMAIN, ERP_TLS, BACKUP_PASSPHRASE_CHOICE and COMPANY_NAME, COMPANY_NAME_AR,
+# COMPANY_CODE, ADMIN_EMAIL (or, with --trial, optionally ERP_TRIAL_PASSWORD).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -93,7 +94,8 @@ done
 
 if [ "$NEW_INSTALL" = 1 ] && [ "$TRIAL" = 1 ]; then
   say "Loading the trial company and users (about a minute)"
-  docker compose exec -T backend python manage.py setup_trial | tee trial-users.txt
+  docker compose exec -T backend python manage.py setup_trial ${ERP_TRIAL_PASSWORD:+--password "$ERP_TRIAL_PASSWORD"} \
+    | tee trial-users.txt
   chmod 600 trial-users.txt
 elif [ "$NEW_INSTALL" = 1 ]; then
   say "First company and administrator"
