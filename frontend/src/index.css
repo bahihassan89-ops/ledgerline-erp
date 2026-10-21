@@ -52,6 +52,7 @@ h3 { font-size: 14px; font-weight: 600; }
 .topbar { height: 56px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 24px; gap: 12px; position: sticky; top: 0; z-index: 5; }
 .topbar .crumbs { color: var(--muted); font-size: 13px; }
 .topbar .spacer { flex: 1; }
+.trial-banner { background: var(--warn-soft); color: #7a4300; border-bottom: 1px solid #f4d6a8; padding: 8px 24px; font-size: 13px; font-weight: 600; }
 .content { padding: 24px; max-width: 1480px; width: 100%; }
 .page-head { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
 .page-head .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }

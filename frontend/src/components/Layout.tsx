@@ -101,6 +101,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           <span className="badge">{company?.base_currency}</span>
           {me && !me.mfa_enabled && <span className="badge warn" title="Enable MFA from your administrator">MFA off</span>}
         </header>
+        {me?.trial && <div className="trial-banner">TRIAL SYSTEM · demo data only. Do not enter real customer, employee or financial data. نسخة تجريبية: لا تُدخل بيانات حقيقية</div>}
         <main className="content">{children}</main>
       </div>
       {(pwd || me?.must_change_password) && <ChangePassword forced={!!me?.must_change_password} onClose={() => setPwd(false)} />}

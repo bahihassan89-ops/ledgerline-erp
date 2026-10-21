@@ -182,6 +182,8 @@ SPECTACULAR_SETTINGS = {
 ERP_MAX_FAILED_LOGINS = int(env("ERP_MAX_FAILED_LOGINS", "5"))
 ERP_LOCKOUT_MINUTES = int(env("ERP_LOCKOUT_MINUTES", "30"))
 # Roles at or above this level must have MFA enabled to log in.
+# Trial installation: demo data only. The UI shows a banner warning against entering real data.
+ERP_TRIAL = env_bool("ERP_TRIAL", False)
 ERP_MFA_REQUIRED_LEVEL = int(env("ERP_MFA_REQUIRED_LEVEL", "4"))
 ERP_PASSWORD_MAX_AGE_DAYS = int(env("ERP_PASSWORD_MAX_AGE_DAYS", "90"))
 

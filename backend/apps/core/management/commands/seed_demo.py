@@ -43,8 +43,16 @@ class Command(BaseCommand):
     def add_arguments(self, p):
         p.add_argument("--code", default="demo")
 
-    @transaction.atomic
     def handle(self, *a, **o):
+        # Own context for the run: the acting user set below must not outlive the command.
+        token = context.set_context(context.RequestContext())
+        try:
+            self.seed(o)
+        finally:
+            context.reset(token)
+
+    @transaction.atomic
+    def seed(self, o):
         code = o["code"]
         if Company.objects.filter(code=code).exists():
             self.stdout.write("Demo company already exists; nothing to do.")

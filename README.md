@@ -7,6 +7,7 @@ application **and** in the PostgreSQL database itself.
 * **Accounting handbook (Egypt edition)** → [`docs/ACCOUNTING_DESIGN.md`](docs/ACCOUNTING_DESIGN.md) — every rule, entry, control and report; start here
 * **Security model** → [`docs/SECURITY.md`](docs/SECURITY.md)
 * **Installing & running it** → [`docs/OPERATIONS.md`](docs/OPERATIONS.md)
+* **Free trial server on Oracle Cloud** → [`docs/TRIAL_ORACLE.md`](docs/TRIAL_ORACLE.md)
 * **API** → `http://localhost:8000/api/docs/` (interactive OpenAPI) once running
 
 ## What's included
@@ -109,7 +110,8 @@ sudo ./install.sh
 ```
 The installer sets up Docker, generates every secret into `.env`, starts the stack behind automatic
 HTTPS (Caddy + Let's Encrypt), creates your first company with the Egyptian profile and its
-administrator, and takes the first encrypted backup. Run it again after `git pull` to upgrade;
+administrator, and takes the first encrypted backup. `sudo ./install.sh --trial` instead loads the
+Egyptian demo company with one user per role (random passwords) and a "TRIAL" banner. Run it again after `git pull` to upgrade;
 it backs up first. Day-to-day running, backups, restore and recovery:
 **[`docs/OPERATIONS.md`](docs/OPERATIONS.md)**.
 

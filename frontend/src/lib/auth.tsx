@@ -5,7 +5,7 @@ export type Company = {
   id: number; name: string; code: string; base_currency: string; level: number
   approval_limit: string | null; permissions: string[]; roles: { id: number; name: string; level: number }[]
 }
-export type Me = { id: number; username: string; email: string; full_name: string; mfa_enabled: boolean; is_superuser: boolean; must_change_password: boolean; companies: Company[] }
+export type Me = { id: number; username: string; email: string; full_name: string; mfa_enabled: boolean; is_superuser: boolean; must_change_password: boolean; trial?: boolean; companies: Company[] }
 
 type Ctx = {
   me: Me | null; company: Company | null; loading: boolean

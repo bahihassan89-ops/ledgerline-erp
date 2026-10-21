@@ -13,6 +13,7 @@ x-app-env: &env
   ERP_DB_USER: erp_app              # the app runs with DML-only rights (see deploy/db-init.sh)
   ERP_DB_PASSWORD: ${ERP_DB_PASSWORD:?set ERP_DB_PASSWORD}
   ERP_MEDIA_ROOT: /app/media
+  ERP_TRIAL: ${ERP_TRIAL:-0}
 
 x-worker: &worker
   build: ./backend

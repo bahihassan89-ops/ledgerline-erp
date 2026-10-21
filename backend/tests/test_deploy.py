@@ -43,3 +43,18 @@ def test_bootstrap_creates_company_and_admin_once():
     call_command("bootstrap", **{**args, "stdout": out})  # re-run keeps everything and prints no password
     assert "One-time password" not in out.getvalue()
     assert User.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_setup_trial_gives_every_demo_user_a_private_working_password():
+    from apps.core.management.commands.seed_demo import DEMO_PASSWORD, USERS
+
+    out = StringIO()
+    call_command("setup_trial", stdout=out)
+    printed = {line.split()[0]: line.split()[-1] for line in out.getvalue().splitlines()
+               if line.strip() and line.split()[0] in {u[0] for u in USERS}}
+    assert set(printed) == {u[0] for u in USERS}
+    for uname, pw in printed.items():
+        user = User.objects.get(username=uname)
+        assert user.check_password(pw), uname
+        assert not user.check_password(DEMO_PASSWORD), uname

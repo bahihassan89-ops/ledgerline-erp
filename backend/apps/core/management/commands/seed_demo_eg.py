@@ -41,8 +41,16 @@ from .seed_demo import DEMO_PASSWORD, USERS
 class Command(BaseCommand):
     help = "Create the Egyptian demo company"
 
-    @transaction.atomic
     def handle(self, *a, **o):
+        # Own context for the run: the acting user set below must not outlive the command.
+        token = context.set_context(context.RequestContext())
+        try:
+            self.seed(o)
+        finally:
+            context.reset(token)
+
+    @transaction.atomic
+    def seed(self, o):
         if Company.objects.filter(code="demo-eg").exists():
             self.stdout.write("Egyptian demo already exists.")
             return
@@ -59,7 +67,7 @@ class Command(BaseCommand):
         for uname, role, first, last in USERS:
             u, _ = User.objects.get_or_create(username=uname, defaults={"email": f"{uname}@demo.local",
                                                                         "first_name": first, "last_name": last})
-            if not u.has_usable_password():
+            if not u.password or not u.has_usable_password():  # get_or_create leaves the hash empty
                 u.set_password(DEMO_PASSWORD)
                 u.save()
             m, _ = Membership.objects.get_or_create(user=u, company=c)
