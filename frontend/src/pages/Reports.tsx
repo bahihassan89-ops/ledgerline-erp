@@ -57,6 +57,10 @@ function Csv({ name, rows, cols }: any) {
   return <button className="sm" onClick={() => download(`${name}.csv`, toCSV(rows, cols))}>Export CSV</button>
 }
 
+function CashFlowSection({ title, s, first }: any) {
+  return <><tr className="group"><td>{title}</td><td /></tr>{first}{s.rows.map((x: any, i: number) => <tr key={i}><td style={{ paddingLeft: 28 }}>{x.label}</td><td className="num">{money(x.amount)}</td></tr>)}<tr className="lvl1"><td>Net cash from {title.toLowerCase()}</td><td className="num">{money(s.total)}</td></tr></>
+}
+
 function Report({ r, d, onDrill }: { r: string; d: any; onDrill: (id: number) => void }) {
   const M = (v: any) => money(v)
   if (r === 'trial-balance') {
@@ -108,12 +112,11 @@ function Report({ r, d, onDrill }: { r: string; d: any; onDrill: (id: number) =>
     </>
   }
   if (r === 'cash-flow') {
-    const Sec = ({ title, s, first }: any) => <><tr className="group"><td>{title}</td><td /></tr>{first}{s.rows.map((x: any, i: number) => <tr key={i}><td style={{ paddingLeft: 28 }}>{x.label}</td><td className="num">{M(x.amount)}</td></tr>)}<tr className="lvl1"><td>Net cash from {title.toLowerCase()}</td><td className="num">{M(s.total)}</td></tr></>
     return <>
       <div className="row" style={{ marginBottom: 10 }}><span className={`badge ${d.reconciled ? 'ok' : 'bad'}`}>{d.reconciled ? '✓ Reconciles to the actual change in cash' : `✗ Actual change ${M(d.actual_cash_change)}`}</span><span className="muted">Indirect method (EAS 4)</span></div>
       <table className="data"><tbody>
-        <Sec title="Operating activities" s={d.operating} first={<tr><td style={{ paddingLeft: 28 }}>Net profit / (loss) for the period</td><td className="num">{M(d.net_profit)}</td></tr>} />
-        <Sec title="Investing activities" s={d.investing} /><Sec title="Financing activities" s={d.financing} />
+        <CashFlowSection title="Operating activities" s={d.operating} first={<tr><td style={{ paddingLeft: 28 }}>Net profit / (loss) for the period</td><td className="num">{M(d.net_profit)}</td></tr>} />
+        <CashFlowSection title="Investing activities" s={d.investing} /><CashFlowSection title="Financing activities" s={d.financing} />
       </tbody><tfoot><tr><td>Net change in cash</td><td className="num">{M(d.net_change)}</td></tr><tr><td>Cash at beginning of period</td><td className="num">{M(d.opening_cash)}</td></tr><tr><td>Cash at end of period</td><td className="num">{M(d.closing_cash)}</td></tr></tfoot></table>
     </>
   }
