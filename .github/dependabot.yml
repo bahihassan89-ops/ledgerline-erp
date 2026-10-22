@@ -5,6 +5,12 @@ updates:
     schedule: { interval: weekly }
     groups:
       python-dependencies: { patterns: ["*"] }
+    ignore:
+      # Stay on the 5.2.x LTS line (longest security-support window) until we deliberately
+      # plan a major-version migration to the *next* LTS. Patch releases (5.2.19, ...) still
+      # come through normally and carry the same security backports as the latest major.
+      - dependency-name: "Django"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   - package-ecosystem: npm
     directory: /frontend
