@@ -11,7 +11,12 @@ from apps.billing.models import DocState, Invoice
 from apps.core.money import ZERO
 from apps.iam.access import ErpPermission, resolve_company
 
-from .models import JournalEntry, JournalLine
+from .models import ACCOUNT_TYPES, AccountClass, JournalEntry, JournalLine
+
+# account_type -> class, for grouping the denormalized JournalLine.account_type column
+# (see models.py) without a join back to ledger_account.
+INCOME_TYPES = [t for t, cls in ACCOUNT_TYPES.items() if cls == AccountClass.INCOME]
+EXPENSE_TYPES = [t for t, cls in ACCOUNT_TYPES.items() if cls == AccountClass.EXPENSE]
 
 
 def _bal(qs):
@@ -37,14 +42,17 @@ class DashboardView(APIView):
         overdue_total = sum((i.amount_residual * i.rate for i in overdue), ZERO)
         months = []
         start = date(today.year - (1 if today.month < 12 else 0), (today.month % 12) + 1, 1)
-        rows = (pl.filter(date__gte=start, account__account_class__in=["income", "expense"])
-                .annotate(m=TruncMonth("date")).values("m", "account__account_class")
+        # Filter/group by the denormalized JournalLine.account_type (indexed) instead of
+        # joining to ledger_account and filtering by account_class -- under load testing this
+        # query showed up as a full sequential scan of the line table once it grew large.
+        rows = (pl.filter(date__gte=start, account_type__in=INCOME_TYPES + EXPENSE_TYPES)
+                .annotate(m=TruncMonth("date")).values("m", "account_type")
                 .annotate(d=Sum("debit"), cr=Sum("credit")))
         agg = {}
         for r in rows:
             k = r["m"].strftime("%Y-%m")
             agg.setdefault(k, {"month": k, "income": ZERO, "expense": ZERO})
-            if r["account__account_class"] == "income":
+            if r["account_type"] in INCOME_TYPES:
                 agg[k]["income"] += (r["cr"] or 0) - (r["d"] or 0)
             else:
                 agg[k]["expense"] += (r["d"] or 0) - (r["cr"] or 0)
@@ -56,17 +64,17 @@ class DashboardView(APIView):
             m += 1
             if m > 12:
                 m, y = 1, y + 1
-        income_ytd = -_bal(pl.filter(date__gte=ys, account__account_class="income"))
-        expense_ytd = _bal(pl.filter(date__gte=ys, account__account_class="expense"))
+        income_ytd = -_bal(pl.filter(date__gte=ys, account_type__in=INCOME_TYPES))
+        expense_ytd = _bal(pl.filter(date__gte=ys, account_type__in=EXPENSE_TYPES))
         return Response({
             "currency": c.base_currency_id,
-            "cash": str(_bal(L.filter(account__account_type__in=["bank", "cash"]))),
-            "receivables": str(_bal(L.filter(account__account_type="receivable"))),
-            "payables": str(-_bal(L.filter(account__account_type="payable"))),
-            "inventory": str(_bal(L.filter(account__account_type="inventory"))),
+            "cash": str(_bal(L.filter(account_type__in=["bank", "cash"]))),
+            "receivables": str(_bal(L.filter(account_type="receivable"))),
+            "payables": str(-_bal(L.filter(account_type="payable"))),
+            "inventory": str(_bal(L.filter(account_type="inventory"))),
             "overdue_receivables": str(round(overdue_total, 2)), "overdue_count": overdue.count(),
-            "revenue_mtd": str(-_bal(pl.filter(date__gte=ms, account__account_type="revenue"))),
-            "revenue_ytd": str(-_bal(pl.filter(date__gte=ys, account__account_type="revenue"))),
+            "revenue_mtd": str(-_bal(pl.filter(date__gte=ms, account_type="revenue"))),
+            "revenue_ytd": str(-_bal(pl.filter(date__gte=ys, account_type="revenue"))),
             "net_profit_ytd": str(income_ytd - expense_ytd),
             "pending_approvals": ApprovalRequest.objects.filter(company=c, state="pending").count(),
             "draft_entries": JournalEntry.objects.filter(company=c, state="draft").count(),

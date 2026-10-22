@@ -241,7 +241,10 @@ class ReportView(APIView):
         if name == "general-ledger":
             acc = get_object_or_404(Account, pk=q.get("account"), company=company)
             partner = q.get("partner") or None
-            return Response(reports.general_ledger(company, acc, dfrom, dto, partner=partner))
+            limit = int(q["limit"]) if q.get("limit", "").isdigit() else None
+            offset = int(q["offset"]) if q.get("offset", "").isdigit() else 0
+            return Response(reports.general_ledger(company, acc, dfrom, dto, partner=partner,
+                                                    limit=limit, offset=offset))
         if name == "balance-sheet":
             as_of = parse_date(q.get("as_of"), today, "as_of")
             if q.get("compare_as_of"):

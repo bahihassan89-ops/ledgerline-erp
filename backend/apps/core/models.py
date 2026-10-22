@@ -176,19 +176,36 @@ class AuditLog(models.Model):
         if self.pk:
             raise ValidationError("Audit log entries are immutable.")
         with transaction.atomic():
-            # Serialize writers so the chain has no forks.
+            # Each company has its own independent hash chain (company_id=None actions --
+            # system/superadmin events with no tenant -- share one chain keyed on 0). Serialize
+            # writers *within that chain only*: a single global lock key here would serialize
+            # every audited write across every tenant in the system, which becomes the write
+            # throughput ceiling for the whole deployment as the number of companies/users
+            # grows. Scoping the lock (and the "last hash" lookup below) to company_id lets
+            # unrelated companies write their audit trails fully in parallel while still giving
+            # each tenant a tamper-evident, fork-free chain.
+            lock_key = self.company_id or 0
             with connection.cursor() as cur:
-                cur.execute("SELECT pg_advisory_xact_lock(%s)", [727001])
-            last = AuditLog.objects.order_by("-id").values_list("hash", flat=True).first()
+                cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", [727001, lock_key])
+            last = (AuditLog.objects.filter(company_id=self.company_id)
+                   .order_by("-id").values_list("hash", flat=True).first())
             self.prev_hash = last or ""
             self.hash = self.compute_hash()
             super().save(*args, **kwargs)
 
     @classmethod
-    def verify_chain(cls, limit=None):
-        """Returns (ok, first_broken_id)."""
+    def verify_chain(cls, company_id=..., limit=None):
+        """Returns (ok, first_broken_id). Chains are per-company (see save()); pass
+        `company_id` to verify one tenant's chain (None = the system/non-tenant chain), or
+        omit it to verify every chain in the table independently."""
+        if company_id is ...:
+            for cid in cls.objects.order_by().values_list("company_id", flat=True).distinct():
+                ok, broken = cls.verify_chain(company_id=cid, limit=limit)
+                if not ok:
+                    return False, broken
+            return True, None
         prev = ""
-        qs = cls.objects.order_by("id")
+        qs = cls.objects.filter(company_id=company_id).order_by("id")
         if limit:
             qs = qs[:limit]
         for row in qs.iterator():

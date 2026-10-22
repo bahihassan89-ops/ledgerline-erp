@@ -196,6 +196,7 @@ def _write_lines(entry, lines):
             description=(s.description or "")[:255], debit=debit, credit=credit, currency_id=entry.currency_id,
             amount_currency=amount_currency, cost_center=s.cost_center, tax=s.tax, tax_base=D(s.tax_base),
             product=s.product, quantity=D(s.quantity), due_date=s.due_date, date=entry.date,
+            account_type=s.account.account_type,
         ))
     JournalLine.objects.bulk_create(objs)
 

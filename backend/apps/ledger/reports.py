@@ -84,16 +84,39 @@ def trial_balance(company, date_from, date_to, *, max_level=None, hide_zero=True
             "balanced": grand["debit"] == grand["credit"] and grand["opening"] == 0 and grand["closing"] == 0}
 
 
-def general_ledger(company, account, date_from, date_to, partner=None):
+# Hard cap on rows returned per call. Busy accounts (the main bank/cash account, a
+# control account) can accumulate hundreds of thousands of lines; building full ORM
+# objects (with joined entry/account/partner/journal) and formatting every Decimal for
+# all of them in one response is CPU-bound in Python, not DB-bound -- at scale this is
+# slow enough to blow past typical request timeouts rather than just "being slow". See
+# `limit`/`offset` below: callers that need a busy account's full history must page
+# through it instead of asking for everything in one request.
+GL_MAX_LIMIT = 1000
+
+
+def general_ledger(company, account, date_from, date_to, partner=None, limit=None, offset=0):
     ids = account.descendant_ids()
     flt = Q(account_id__in=ids)
     if partner:
         flt &= Q(partner=partner)
     o = _sums(company, before=date_from, extra=flt)
     opening = sum((d - c for d, c in o.values()), ZERO)
-    qs = (JournalLine.objects.filter(company=company, posted=True, date__gte=date_from, date__lte=date_to)
-          .filter(flt).select_related("entry", "account", "partner", "entry__journal")
-          .order_by("date", "entry__number", "sequence"))
+
+    base_qs = (JournalLine.objects.filter(company=company, posted=True, date__gte=date_from, date__lte=date_to)
+              .filter(flt))
+    offset = max(0, int(offset or 0))
+    limit = min(int(limit), GL_MAX_LIMIT) if limit else GL_MAX_LIMIT
+    total_count = base_qs.count()  # cheap: single indexed aggregate, no joins (see loadtest benchmarks)
+
+    ordered = base_qs.order_by("date", "entry__number", "sequence")
+    # Running balance must account for every matching line before this page, not just
+    # those before date_from. Sum only the two numeric columns for the skipped rows
+    # (no select_related/joins) -- far cheaper than materializing them as full objects.
+    if offset:
+        skipped = ordered.values("debit", "credit")[:offset].aggregate(d=Sum("debit"), c=Sum("credit"))
+        opening += (skipped["d"] or ZERO) - (skipped["c"] or ZERO)
+
+    qs = (ordered.select_related("entry", "account", "partner", "entry__journal")[offset:offset + limit])
     running, rows = opening, []
     for ln in qs:
         running += ln.debit - ln.credit
@@ -103,7 +126,11 @@ def general_ledger(company, account, date_from, date_to, partner=None):
                      "reference": ln.entry.reference, "debit": str(ln.debit), "credit": str(ln.credit),
                      "currency": ln.currency_id, "amount_currency": str(ln.amount_currency), "balance": str(running)})
     return {"account": {"id": account.pk, "code": account.code, "name": account.name},
-            "opening_balance": str(opening), "closing_balance": str(running), "rows": rows}
+            # Balance carried into this page (the account's true opening balance when offset=0,
+            # or the running balance after all skipped rows otherwise).
+            "opening_balance": str(opening), "closing_balance": str(running),
+            "rows": rows, "total_count": total_count, "limit": limit, "offset": offset,
+            "has_more": offset + len(rows) < total_count}
 
 
 def _statement(company, classes, *, date_from=None, date_to=None, max_level=None, exclude_closing=False):

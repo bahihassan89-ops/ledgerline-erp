@@ -66,5 +66,8 @@ class AuditLogViewSet(CompanyReadOnlyViewSet):
 
     @action(detail=False, methods=["get"])
     def verify(self, request):
-        ok, broken = AuditLog.verify_chain()
-        return Response({"intact": ok, "first_broken_id": broken, "entries": AuditLog.objects.count()})
+        # Chains are per-company (see AuditLog.save()); verify this tenant's chain, not
+        # every company's in the whole system.
+        ok, broken = AuditLog.verify_chain(company_id=self.company.pk)
+        return Response({"intact": ok, "first_broken_id": broken,
+                         "entries": AuditLog.objects.filter(company=self.company).count()})
