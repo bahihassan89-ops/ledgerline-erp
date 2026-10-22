@@ -47,7 +47,10 @@ function PaymentEditor({ direction, pay, onClose, onChanged }: any) {
   const canAllocate = editable || (p?.state === 'posted' && num(p.amount_unallocated) > 0)
 
   useEffect(() => {
-    if (!f.partner) return setOpen([])
+    // Resetting the allocation list when the partner is cleared, mirroring the fetch below
+    // that repopulates it once a partner is chosen again — not a cascading-render pattern.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (!f.partner) { setOpen([]); return }
     const base = inbound ? '/invoices/' : '/bills/'
     list(base, { partner: f.partner, state: 'posted', move_type: inbound ? 'out_invoice' : 'in_invoice' })
       .then((xs) => setOpen(xs.filter((x) => num(x.amount_residual) > 0 && x.currency === f.currency)))

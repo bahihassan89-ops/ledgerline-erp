@@ -17,7 +17,7 @@ const AuthCtx = createContext<Ctx>(null as any)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(() => session.hasRefresh())
   const [companyId, setCompanyId] = useState<number | null>(() => Number(session.company()) || null)
 
   const reload = useCallback(async () => {
@@ -29,9 +29,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch { setMe(null) } finally { setLoading(false) }
   }, [companyId])
 
+  const logout = useCallback(async () => {
+    try { await post('/auth/logout/', { refresh: sessionStorage.getItem('erp.refresh') }) } catch { /* ignore */ }
+    session.clear(); setMe(null)
+  }, [])
+
   useEffect(() => {
     setUnauthorizedHandler(() => { session.clear(); setMe(null) })
-    if (session.hasRefresh()) reload(); else setLoading(false)
+    // One-shot session restore on mount: reload() is async and only touches state after
+    // awaiting the network call, so this isn't a synchronous cascading setState.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (session.hasRefresh()) reload()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -44,17 +52,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     evs.forEach((e) => window.addEventListener(e, reset))
     reset()
     return () => { clearTimeout(t); evs.forEach((e) => window.removeEventListener(e, reset)) }
-  }, [me])
+  }, [me, logout])
 
   const company = me?.companies.find((c) => c.id === companyId) || me?.companies[0] || null
   const can = (perm: string | string[]) => {
     if (!company) return false
     const ps = Array.isArray(perm) ? perm : [perm]
     return ps.some((p) => company.permissions.includes(p))
-  }
-  const logout = async () => {
-    try { await post('/auth/logout/', { refresh: sessionStorage.getItem('erp.refresh') }) } catch { /* ignore */ }
-    session.clear(); setMe(null)
   }
   const finishLogin = async (t: { access: string; refresh: string }) => { session.setTokens(t.access, t.refresh); await reload() }
   const switchCompany = (id: number) => { session.setCompany(id); setCompanyId(id); window.location.assign('/') }

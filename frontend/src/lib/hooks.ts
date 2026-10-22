@@ -6,6 +6,7 @@ export function useFetch<T = any>(path: string | null, query?: Record<string, an
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(!!path)
   const q = JSON.stringify(query || {})
+  const depsKey = JSON.stringify(deps)
   const seq = useRef(0)
   const load = useCallback(async () => {
     if (!path) return
@@ -16,7 +17,10 @@ export function useFetch<T = any>(path: string | null, query?: Record<string, an
       if (n === seq.current) { setData(d); setError(null) }
     } catch (e: any) { if (n === seq.current) setError(e.message) } finally { if (n === seq.current) setLoading(false) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, q, ...deps])
+  }, [path, q, depsKey])
+  // load() is async; state is only set after the awaited network call resolves, so this
+  // isn't a synchronous cascading setState — it's the standard fetch-on-mount/deps-change pattern.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { load() }, [load])
   return { data, error, loading, reload: load, setData }
 }
