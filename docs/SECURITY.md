@@ -10,7 +10,7 @@ misconfiguration does not compromise the books.
 | Password storage | Argon2id (Django `Argon2PasswordHasher`) |
 | Password policy | ≥ 12 chars, upper + lower + digit + symbol, not common, not similar to username; 90-day expiry (configurable); admin-set passwords must be changed at first login |
 | Brute force | Account lockout after 5 failures for 30 min; login endpoints rate-limited (10/min per IP); constant-time username handling to prevent user enumeration |
-| MFA | TOTP (RFC 6238). **Mandatory** for roles at level ≥ 4 (`ERP_MFA_REQUIRED_LEVEL`) and superusers. ±1 step drift, replay of a used code rejected. MFA seeds encrypted at rest (Fernet, separate key). |
+| MFA | TOTP (RFC 6238). **Mandatory** for roles at level ≥ 1 (`ERP_MFA_REQUIRED_LEVEL`, default lowered from 4) and superusers — i.e. every role except the unassigned/no-role case, so a phished clerk or accountant password alone is not enough to log in. ±1 step drift, replay of a used code rejected. MFA seeds encrypted at rest (Fernet, separate key). |
 | Tokens | Access JWT 15 min, kept in memory only (never localStorage). Refresh token rotates on every use and the old one is blacklisted, so a stolen refresh token is detected on reuse. Logout blacklists it. 30-min idle logout in the UI. |
 | Integration keys | `prefix.secret`; only SHA-256 hash stored; shown once; optional expiry and IP allow-list; effective rights = **owner's rights ∩ key scopes** (a key can never exceed its creator). |
 
@@ -75,15 +75,34 @@ outbox (events only leave after the business change commits), exponential retrie
 * All secrets come from environment variables; production refuses to start with defaults, short keys or DEBUG on.
 * Money is `Decimal` end to end (never float) and serialized as strings.
 
-## 9. Operational checklist before go-live
+## 9. CI/CD security gates
+
+Every push and pull request (`.github/workflows/ci.yml`) runs, and fails the build on:
+
+* `pip-audit` — known CVEs in backend dependencies.
+* `bandit` — static analysis for common Python security bugs (SSRF-prone calls, injection, etc.).
+* `npm audit --audit-level=high` — known CVEs in frontend dependencies.
+* `trufflehog --only-verified` — scans the full git history for live, verifiable secrets.
+
+A container image scan (Trivy, backend + frontend images) runs on every build too, but is
+report-only: base-OS package CVEs are fixed upstream on Debian/Alpine's own schedule, independent of
+this codebase, and sometimes have no release yet, so gating on them would leave CI permanently red
+with nothing actionable. Review that job's summary and bump the base image tags periodically.
+
+Dependabot (`.github/dependabot.yml`) opens weekly PRs for pip, npm, Docker base images and GitHub
+Actions so patches land before `pip-audit`/`npm audit` have to catch them.
+
+## 10. Operational checklist before go-live
 
 - [ ] Long random `ERP_SECRET_KEY` and `ERP_FIELD_ENCRYPTION_KEY` stored in a secrets manager
 - [ ] TLS certificate; only port 443 exposed; database not reachable from the internet
 - [ ] Separate DB owner and `erp_app` credentials; owner credential not on application hosts
 - [ ] Encrypted backups with point-in-time recovery; quarterly restore test
-- [ ] MFA enrolled for every finance user (consider lowering `ERP_MFA_REQUIRED_LEVEL` to 1)
+- [ ] MFA enrolled for every finance user (`ERP_MFA_REQUIRED_LEVEL` now defaults to 1, i.e. every role)
 - [ ] Audit log export to WORM storage
 - [ ] Independent penetration test
-- [ ] Dependency updates monitored (`pip-audit`, `npm audit`)
+- [x] Dependency updates monitored (`pip-audit`, `npm audit`, `bandit`, `trufflehog` secret scan and a
+      container image scan all run in CI on every push/PR; Dependabot opens weekly update PRs for
+      pip/npm/Docker base images/GitHub Actions)
 - [ ] ETA: pre-production tests accepted before switching to production; signing-agent PC hardened
 - [ ] Workers running: `eta_sync`, `deliver_webhooks`, scheduler (`run_recurring`)

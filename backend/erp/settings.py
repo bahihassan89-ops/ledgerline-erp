@@ -182,9 +182,13 @@ SPECTACULAR_SETTINGS = {
 ERP_MAX_FAILED_LOGINS = int(env("ERP_MAX_FAILED_LOGINS", "5"))
 ERP_LOCKOUT_MINUTES = int(env("ERP_LOCKOUT_MINUTES", "30"))
 # Roles at or above this level must have MFA enabled to log in.
+# Default is 1 (every role except the unassigned/no-role case) rather than only senior roles:
+# phishing a junior accountant's password is just as damaging to the books as phishing the CFO's.
+# Login still degrades gracefully: a user who hasn't enrolled yet is walked through TOTP setup
+# instead of being locked out (see MfaSetupView), so this is safe to raise without a migration step.
 # Trial installation: demo data only. The UI shows a banner warning against entering real data.
 ERP_TRIAL = env_bool("ERP_TRIAL", False)
-ERP_MFA_REQUIRED_LEVEL = int(env("ERP_MFA_REQUIRED_LEVEL", "4"))
+ERP_MFA_REQUIRED_LEVEL = int(env("ERP_MFA_REQUIRED_LEVEL", "1"))
 ERP_PASSWORD_MAX_AGE_DAYS = int(env("ERP_PASSWORD_MAX_AGE_DAYS", "90"))
 
 # --- CORS / CSRF / transport ---------------------------------------------

@@ -216,7 +216,9 @@ def serialize(value):
 def http_transport(method, url, headers, body):
     req = urllib.request.Request(url, data=body, method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
+        # url is the ETA/signing-agent endpoint from server-side company config (HTTPS only, set
+        # by a controller/cfo-level admin), never taken from an API request body.
+        with urllib.request.urlopen(req, timeout=60) as r:  # nosec B310
             raw = r.read()
             return r.status, (json.loads(raw) if raw else {})
     except urllib.error.HTTPError as e:

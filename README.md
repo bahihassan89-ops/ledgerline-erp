@@ -59,13 +59,15 @@ npm run dev                       # http://localhost:5173
 
 | User | Role | Level | Approval limit | Notes |
 |---|---|---|---|---|
-| `clerk` | Accounting Clerk | 1 | 0 | Drafts only, cannot post |
-| `accountant` | Accountant | 2 | 10,000 | Posts entries, invoices, payments |
-| `senior` | Senior Accountant | 3 | 50,000 | Reversals, credit notes, master data |
-| `controller` | Financial Controller | 4 | 250,000 | Chart of accounts, period close — **MFA enrolment at first login** |
+| `clerk` | Accounting Clerk | 1 | 0 | Drafts only, cannot post — **MFA enrolment at first login** |
+| `accountant` | Accountant | 2 | 10,000 | Posts entries, invoices, payments — **MFA** |
+| `senior` | Senior Accountant | 3 | 50,000 | Reversals, credit notes, master data — **MFA** |
+| `controller` | Financial Controller | 4 | 250,000 | Chart of accounts, period close — **MFA** |
 | `cfo` | CFO / Finance Director | 5 | unlimited | Lock periods, year-end close — **MFA** |
 | `auditor` | Auditor | 0 | — | Read-only + audit trail |
 | `admin` | System Administrator | 0 | — | Users & integrations, **no accounting rights** (SoD) |
+
+Any role at level ≥ 1 must enrol TOTP MFA at first login (`ERP_MFA_REQUIRED_LEVEL`, see `docs/SECURITY.md`).
 
 ### Set up your own company
 

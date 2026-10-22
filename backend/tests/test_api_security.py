@@ -91,6 +91,12 @@ def test_login_lockout_and_mfa(env, settings):
 def test_jwt_flow_and_refresh_rotation(env):
     cl = APIClient()
     r = cl.post("/api/auth/login/", {"username": "accountant", "password": PWD})
+    # Every role now requires MFA (ERP_MFA_REQUIRED_LEVEL=1), so a first login walks through enrolment.
+    assert r.data.get("mfa_setup_required") and "access" not in r.data
+    tok = r.data["mfa_token"]
+    secret = cl.post("/api/auth/mfa/setup/", {"mfa_token": tok}).data["secret"]
+    code = pyotp.TOTP(secret).now()
+    r = cl.post("/api/auth/mfa/confirm/", {"mfa_token": tok, "code": code})
     assert "access" in r.data
     cl.credentials(HTTP_AUTHORIZATION=f"Bearer {r.data['access']}")
     me = cl.get("/api/auth/me/")
