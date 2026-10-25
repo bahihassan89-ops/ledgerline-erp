@@ -116,6 +116,31 @@ class CostCenter(CompanyScoped):
         return f"{self.code} {self.name}"
 
 
+class Branch(CompanyScoped):
+    """A physical/legal branch of a company. Every posted journal entry belongs to exactly one
+    branch (see JournalEntry.branch); branch-level reports (trial balance, income statement,
+    balance sheet) filter by it, and the company-wide reports consolidate across all of a
+    company's branches. Each company always has exactly one `is_main` branch, created
+    automatically by setup_company -- entries created without an explicit branch default to it,
+    so existing single-branch companies need no behaviour change."""
+    code = models.CharField(max_length=20)
+    name = models.CharField(max_length=120)
+    address = models.TextField(blank=True)
+    is_main = models.BooleanField(default=False)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = [("company", "code")]
+        ordering = ["code"]
+        constraints = [
+            models.UniqueConstraint(fields=["company"], condition=models.Q(is_main=True),
+                                    name="one_main_branch_per_company"),
+        ]
+
+    def __str__(self):
+        return f"{self.code} {self.name}"
+
+
 class Sequence(models.Model):
     """Gapless document numbering. Always call `next_number` inside the transaction that
     creates the document, so a rollback also rolls back the counter."""

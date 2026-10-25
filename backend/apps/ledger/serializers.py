@@ -113,13 +113,13 @@ class JournalEntrySerializer(CompanyScopedSerializer):
 
     class Meta:
         model = JournalEntry
-        fields = ["id", "number", "journal", "journal_code", "date", "reference", "narration", "state", "currency",
-                  "rate", "source_type", "source_id", "total_debit", "total_credit", "posted_by_name", "posted_at",
-                  "created_by_name", "created_at", "reversal_of", "reversal_of_number", "reversed_by", "is_closing",
-                  "auto_reverse_date", "lines"]
+        fields = ["id", "number", "journal", "journal_code", "branch", "date", "reference", "narration", "state",
+                  "currency", "rate", "source_type", "source_id", "total_debit", "total_credit", "posted_by_name",
+                  "posted_at", "created_by_name", "created_at", "reversal_of", "reversal_of_number", "reversed_by",
+                  "is_closing", "auto_reverse_date", "lines"]
         read_only_fields = ["number", "state", "source_type", "source_id", "total_debit", "total_credit",
                             "posted_at", "reversal_of", "is_closing"]
-        extra_kwargs = {"currency": {"required": False}, "rate": {"required": False}}
+        extra_kwargs = {"currency": {"required": False}, "rate": {"required": False}, "branch": {"required": False}}
 
     def get_reversed_by(self, obj):
         try:

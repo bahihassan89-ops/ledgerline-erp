@@ -6,8 +6,8 @@ from rest_framework.routers import DefaultRouter
 
 from apps.approvals.views import ApprovalRequestViewSet, ApprovalRuleViewSet
 from apps.billing.views import CustomerInvoiceViewSet, PaymentViewSet, VendorBillViewSet
-from apps.core.views import (AuditLogViewSet, CompanyViewSetCurrent, CostCenterViewSet, CurrencyViewSet,
-                             ExchangeRateViewSet)
+from apps.core.views import (AuditLogViewSet, BranchViewSet, CompanyViewSetCurrent, CostCenterViewSet,
+                             CurrencyViewSet, ExchangeRateViewSet)
 from apps.iam import auth_views
 from apps.iam.views import PermissionCatalogView, RoleViewSet, UserViewSet
 from apps.integrations.views import ApiKeyViewSet, WebhookDeliveryViewSet, WebhookViewSet
@@ -33,6 +33,7 @@ r.register("currencies", CurrencyViewSet, basename="currency")
 r.register("company", CompanyViewSetCurrent, basename="company")
 r.register("exchange-rates", ExchangeRateViewSet)
 r.register("cost-centers", CostCenterViewSet)
+r.register("branches", BranchViewSet)
 r.register("audit-log", AuditLogViewSet)
 r.register("users", UserViewSet, basename="user")
 r.register("roles", RoleViewSet)

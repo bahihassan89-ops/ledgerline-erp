@@ -9,7 +9,7 @@ from apps.core.money import ZERO
 from .models import DEBIT_NORMAL, PL_CLASSES, Account, AccountClass, JournalLine
 
 
-def _sums(company, *, date_from=None, date_to=None, before=None, exclude_closing=False, extra=None):
+def _sums(company, *, date_from=None, date_to=None, before=None, exclude_closing=False, extra=None, branch=None):
     qs = JournalLine.objects.filter(company=company, posted=True)
     if date_from:
         qs = qs.filter(date__gte=date_from)
@@ -19,6 +19,10 @@ def _sums(company, *, date_from=None, date_to=None, before=None, exclude_closing
         qs = qs.filter(date__lt=before)
     if exclude_closing:
         qs = qs.filter(entry__is_closing=False)
+    if branch:
+        # Filters the denormalized JournalLine.branch (no join to ledger_journalentry), the
+        # same reasoning as account_type in models.py -- see the composite index on this field.
+        qs = qs.filter(branch=branch)
     if extra:
         qs = qs.filter(extra)
     return {r["account"]: (r["d"] or ZERO, r["c"] or ZERO)
@@ -51,12 +55,13 @@ def _rollup(accounts, children, leaf_values, keys):
     return totals
 
 
-def trial_balance(company, date_from, date_to, *, max_level=None, hide_zero=True):
+def trial_balance(company, date_from, date_to, *, max_level=None, hide_zero=True, branch=None):
     """Opening balance (before date_from), period debit/credit, closing balance — per account,
     rolled up the account tree. Once prior years are closed, P&L opening balances are zero
-    because the closing entry moved them to retained earnings."""
-    opening = _sums(company, before=date_from)
-    movement = _sums(company, date_from=date_from, date_to=date_to)
+    because the closing entry moved them to retained earnings. Pass `branch` to scope the report
+    to a single branch (see Branch model); omit it for the company-wide (all branches) view."""
+    opening = _sums(company, before=date_from, branch=branch)
+    movement = _sums(company, date_from=date_from, date_to=date_to, branch=branch)
     accounts, children = _tree(company)
     leaf = {}
     for a in accounts:
@@ -133,8 +138,9 @@ def general_ledger(company, account, date_from, date_to, partner=None, limit=Non
             "has_more": offset + len(rows) < total_count}
 
 
-def _statement(company, classes, *, date_from=None, date_to=None, max_level=None, exclude_closing=False):
-    sums = _sums(company, date_from=date_from, date_to=date_to, exclude_closing=exclude_closing)
+def _statement(company, classes, *, date_from=None, date_to=None, max_level=None, exclude_closing=False,
+                branch=None):
+    sums = _sums(company, date_from=date_from, date_to=date_to, exclude_closing=exclude_closing, branch=branch)
     accounts, children = _tree(company)
     leaf = {a.pk: {"bal": sums.get(a.pk, (ZERO, ZERO))[0] - sums.get(a.pk, (ZERO, ZERO))[1]} for a in accounts}
     totals = _rollup(accounts, children, leaf, ["bal"])
@@ -155,11 +161,11 @@ def _statement(company, classes, *, date_from=None, date_to=None, max_level=None
     return sections
 
 
-def balance_sheet(company, as_of, max_level=None):
+def balance_sheet(company, as_of, max_level=None, branch=None):
     sections = _statement(company, [AccountClass.ASSET, AccountClass.LIABILITY, AccountClass.EQUITY],
-                          date_to=as_of, max_level=max_level)
+                          date_to=as_of, max_level=max_level, branch=branch)
     # Unclosed profit/loss to date belongs in equity until year-end closing moves it.
-    pl = _sums(company, date_to=as_of, extra=Q(account__account_class__in=PL_CLASSES))
+    pl = _sums(company, date_to=as_of, extra=Q(account__account_class__in=PL_CLASSES), branch=branch)
     current_result = -sum((d - c for d, c in pl.values()), ZERO)  # positive = profit
     assets, liab, equity = (s["total"] for s in sections)
     equity_total = equity + current_result
@@ -173,25 +179,42 @@ def balance_sheet(company, as_of, max_level=None):
             "balanced": assets == liab + equity_total}
 
 
-def income_statement(company, date_from, date_to, max_level=None):
+def income_statement(company, date_from, date_to, max_level=None, branch=None):
+    """Pass `branch` to scope to a single Branch (see branch_income_statement() for every branch
+    plus the consolidated company-wide total in one call); omit it for the company-wide view."""
     sections = _statement(company, [AccountClass.INCOME, AccountClass.EXPENSE], date_from=date_from,
-                          date_to=date_to, max_level=max_level, exclude_closing=True)
+                          date_to=date_to, max_level=max_level, exclude_closing=True, branch=branch)
     income, expense = sections[0]["total"], sections[1]["total"]
     # Filter on the denormalized JournalLine.account_type (indexed alongside company/posted/date,
     # see migration 0005) rather than account__account_type -- the latter joins to ledger_account
     # and, under load testing at ~900k lines, fell back to a sequential scan + hash join instead of
     # the composite index's bitmap scan (EXPLAIN ANALYZE: ~546ms -> ~346ms per call at that volume).
     cogs_sum = _sums(company, date_from=date_from, date_to=date_to, exclude_closing=True,
-                     extra=Q(account_type="cost_of_sales"))
+                     extra=Q(account_type="cost_of_sales"), branch=branch)
     cogs = sum((d - c for d, c in cogs_sum.values()), ZERO)
     rev_sum = _sums(company, date_from=date_from, date_to=date_to, exclude_closing=True,
-                    extra=Q(account_type="revenue"))
+                    extra=Q(account_type="revenue"), branch=branch)
     revenue = -sum((d - c for d, c in rev_sum.values()), ZERO)
     for s in sections:
         s["total"] = str(s["total"])
-    return {"date_from": date_from, "date_to": date_to, "sections": sections,
+    return {"date_from": date_from, "date_to": date_to, "branch_id": branch.pk if branch else None,
+            "sections": sections,
             "revenue": str(revenue), "cost_of_sales": str(cogs), "gross_profit": str(revenue - cogs),
             "total_income": str(income), "total_expense": str(expense), "net_profit": str(income - expense)}
+
+
+def branch_income_statement(company, date_from, date_to, max_level=None):
+    """Each of the company's active branches' income statement, plus the consolidated (all-branch)
+    company-wide income statement -- the roll-up the user sees as "the company's income statement".
+    Consolidation here is a straight sum of posted lines across branches (no inter-branch eliminations:
+    this codebase has no concept of inter-branch transfers/trading yet, so there is nothing to eliminate)."""
+    from apps.core.models import Branch
+    branches = list(Branch.objects.filter(company=company, active=True).order_by("code"))
+    by_branch = [{"branch_id": b.pk, "code": b.code, "name": b.name,
+                  "statement": income_statement(company, date_from, date_to, max_level, branch=b)}
+                 for b in branches]
+    consolidated = income_statement(company, date_from, date_to, max_level)
+    return {"date_from": date_from, "date_to": date_to, "branches": by_branch, "consolidated": consolidated}
 
 
 CF_DEFAULT = {

@@ -14,6 +14,7 @@ from apps.approvals.models import DocumentType
 from apps.approvals.services import ensure_approved
 from apps.core.api import CompanyReadOnlyViewSet, CompanyViewSet
 from apps.core.exceptions import BusinessError
+from apps.core.models import Branch
 from apps.iam.access import ErpPermission, has_perm, require, resolve_company
 
 from . import reports, services
@@ -156,7 +157,7 @@ class JournalEntryViewSet(CompanyViewSet):
         specs, rate = self._specs(company, v["lines"], currency, v.get("rate"), v["date"])
         entry = services.create_entry(company, v["journal"], v["date"], specs, user=request.user,
                                       reference=v.get("reference", ""), narration=v.get("narration", ""),
-                                      currency=currency, rate=rate)
+                                      currency=currency, rate=rate, branch=v.get("branch"))
         if v.get("auto_reverse_date"):
             entry.auto_reverse_date = v["auto_reverse_date"]
             entry.save(update_fields=["auto_reverse_date"])
@@ -169,13 +170,22 @@ class JournalEntryViewSet(CompanyViewSet):
         s = self.get_serializer(entry, data=request.data, partial=kwargs.get("partial", False))
         s.is_valid(raise_exception=True)
         v = s.validated_data
-        for f in ("journal", "date", "reference", "narration", "auto_reverse_date"):
+        for f in ("journal", "branch", "date", "reference", "narration", "auto_reverse_date"):
             if f in v:
                 setattr(entry, f, v[f])
         if "currency" in v:
             entry.currency = v["currency"]
-        if "lines" in v:
-            specs, rate = self._specs(self.company, v["lines"], entry.currency_id, v.get("rate"), entry.date)
+        # Lines carry a denormalized copy of entry.branch (see JournalLine.branch) -- if branch
+        # changed, existing lines must be rewritten even when the line amounts themselves didn't
+        # change, otherwise they'd drift out of sync with the entry (caught by the DB trigger
+        # extended in migration 0008 the moment this entry is posted).
+        if "lines" in v or "branch" in v:
+            lines = v.get("lines")
+            if lines is None:
+                lines = [{"account": ln.account, "debit": ln.debit, "credit": ln.credit, "partner": ln.partner,
+                         "description": ln.description, "cost_center": ln.cost_center, "tax": ln.tax,
+                         "due_date": ln.due_date} for ln in entry.lines.all()]
+            specs, rate = self._specs(self.company, lines, entry.currency_id, v.get("rate"), entry.date)
             entry.rate = rate
             services.replace_lines(entry, specs)
         entry.save()
@@ -235,9 +245,12 @@ class ReportView(APIView):
         dfrom = parse_date(q.get("date_from"), year_start, "date_from")
         dto = parse_date(q.get("date_to"), today, "date_to")
         level = int(q["level"]) if q.get("level", "").isdigit() else None
+        # Optional ?branch=<id> scopes trial-balance/balance-sheet/income-statement to a single
+        # Branch; omitted (the default) means the company-wide, all-branches view.
+        branch = get_object_or_404(Branch, pk=q["branch"], company=company) if q.get("branch") else None
         if name == "trial-balance":
             return Response(reports.trial_balance(company, dfrom, dto, max_level=level,
-                                                  hide_zero=q.get("hide_zero", "1") != "0"))
+                                                  hide_zero=q.get("hide_zero", "1") != "0", branch=branch))
         if name == "general-ledger":
             acc = get_object_or_404(Account, pk=q.get("account"), company=company)
             partner = q.get("partner") or None
@@ -250,12 +263,16 @@ class ReportView(APIView):
             if q.get("compare_as_of"):
                 return Response(reports.comparative(reports.balance_sheet, company, (as_of, level),
                                                     (parse_date(q["compare_as_of"]), level)))
-            return Response(reports.balance_sheet(company, as_of, level))
+            return Response(reports.balance_sheet(company, as_of, level, branch=branch))
         if name == "income-statement":
             if q.get("compare_from") and q.get("compare_to"):
                 return Response(reports.comparative(reports.income_statement, company, (dfrom, dto, level),
                                                     (parse_date(q["compare_from"]), parse_date(q["compare_to"]), level)))
-            return Response(reports.income_statement(company, dfrom, dto, level))
+            return Response(reports.income_statement(company, dfrom, dto, level, branch=branch))
+        if name == "branch-income-statement":
+            # Every active branch's income statement plus the consolidated company-wide total
+            # (see reports.branch_income_statement -- the user-facing "roll-up" report).
+            return Response(reports.branch_income_statement(company, dfrom, dto, level))
         if name in ("ar-aging", "ap-aging"):
             from apps.billing.services import aging
             return Response(aging(company, "receivable" if name == "ar-aging" else "payable",

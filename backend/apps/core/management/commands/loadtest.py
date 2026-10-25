@@ -34,7 +34,7 @@ from decimal import Decimal
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
 
-from apps.core.models import Company
+from apps.core.models import Branch, Company
 from apps.iam.models import User
 from apps.ledger import services as svc
 from apps.ledger.models import ACCOUNT_TYPES, Account, AccountClass, EntryState, Journal, JournalEntry, JournalLine
@@ -68,6 +68,9 @@ class Command(BaseCommand):
         if len(self.accounts) < 2:
             raise CommandError("Need at least 2 postable leaf accounts; run setup_company first.")
         self.journal = Journal.objects.get(company=company, code="GEN")
+        self.branch = Branch.objects.filter(company=company, is_main=True).first()
+        if not self.branch:
+            raise CommandError("Company has no main branch; run setup_company first.")
         self.user = User.objects.filter(memberships__company=company).first() or User.objects.first()
 
         if o["bulk"]:
@@ -107,7 +110,7 @@ class Command(BaseCommand):
         for i in range(count):
             d = START_DATE + timedelta(days=rng.randrange(0, SPAN_DAYS + 1))
             entries.append(JournalEntry(
-                company=company, journal=self.journal, date=d, state=EntryState.DRAFT,
+                company=company, journal=self.journal, branch=self.branch, date=d, state=EntryState.DRAFT,
                 currency_id=currency_id, rate=Decimal("1"), reference=f"LOADTEST-{start_number + i}",
                 narration="Synthetic load-test entry", total_debit=Decimal("0"), total_credit=Decimal("0"),
             ))
@@ -123,13 +126,13 @@ class Command(BaseCommand):
             rest = (amt - split).quantize(Decimal("0.01"))
             lines.append(JournalLine(entry=e, company=company, sequence=1, account=a1, debit=split, credit=0,
                                      currency_id=currency_id, amount_currency=split, tax_base=0, quantity=0,
-                                     date=e.date, posted=True, account_type=a1.account_type))
+                                     date=e.date, posted=True, account_type=a1.account_type, branch=self.branch))
             lines.append(JournalLine(entry=e, company=company, sequence=2, account=a2, debit=rest, credit=0,
                                      currency_id=currency_id, amount_currency=rest, tax_base=0, quantity=0,
-                                     date=e.date, posted=True, account_type=a2.account_type))
+                                     date=e.date, posted=True, account_type=a2.account_type, branch=self.branch))
             lines.append(JournalLine(entry=e, company=company, sequence=3, account=a3, debit=0, credit=amt,
                                      currency_id=currency_id, amount_currency=-amt, tax_base=0, quantity=0,
-                                     date=e.date, posted=True, account_type=a3.account_type))
+                                     date=e.date, posted=True, account_type=a3.account_type, branch=self.branch))
             totals.append(amt)
         JournalLine.objects.bulk_create(lines, batch_size=3000)
 

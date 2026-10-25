@@ -10,7 +10,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.approvals.models import ApprovalRule
-from apps.core.models import Company, Currency
+from apps.core.models import Branch, Company, Currency
 from apps.iam.models import Role
 from apps.iam.permissions_catalog import DEFAULT_ROLES
 from apps.inventory.models import ProductCategory, Warehouse
@@ -191,6 +191,7 @@ def setup(company, vat, year, egypt=None):
                                     approver_levels=levels)
     for name, days in [("Immediate", 0), ("Net 15", 15), ("Net 30", 30), ("Net 60", 60), ("Net 90", 90)]:
         PaymentTerm.objects.get_or_create(company=company, name=name, defaults={"days": days})
+    Branch.objects.get_or_create(company=company, code="MAIN", defaults={"name": "Main Branch", "is_main": True})
     Warehouse.objects.get_or_create(company=company, code="MAIN", defaults={"name": "Main Warehouse"})
     for name, method in [("Merchandise (FIFO)", "fifo"), ("Merchandise (Average cost)", "average")]:
         ProductCategory.objects.get_or_create(company=company, name=name, defaults=dict(

@@ -5,7 +5,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
 
-from apps.core.models import MONEY, QTY, RATE, Company, CompanyScoped, CostCenter, Currency
+from apps.core.models import MONEY, QTY, RATE, Branch, Company, CompanyScoped, CostCenter, Currency
 from apps.core.signals import audited
 
 
@@ -300,6 +300,8 @@ UNPOSTED_STATES = ("draft", "to_approve", "approved")
 
 class JournalEntry(CompanyScoped):
     journal = models.ForeignKey(Journal, on_delete=models.PROTECT, related_name="entries")
+    branch = models.ForeignKey(Branch, on_delete=models.PROTECT, related_name="entries",
+                               help_text="Defaults to the company's main branch when not specified.")
     number = models.CharField(max_length=40, blank=True, db_index=True)  # assigned at posting
     date = models.DateField(db_index=True)
     period = models.ForeignKey(FiscalPeriod, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
@@ -368,12 +370,18 @@ class JournalLine(models.Model):
     # ~400ms per aggregate at ~1M lines, scaling linearly with table size). Denormalizing it here,
     # the same way `date`/`posted` already are, lets those queries use an index instead.
     account_type = models.CharField(max_length=30, choices=AccountType.choices, blank=True)
+    # Copy of entry.branch_id, same rationale and same enforcement mechanism (DB trigger, see
+    # migration 0008) as account_type above: branch-level reports filter/group by branch over
+    # the whole line table, and doing that via a join to ledger_journalentry has no supporting
+    # index at this table's scale.
+    branch = models.ForeignKey(Branch, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
 
     class Meta:
         ordering = ["entry_id", "sequence", "id"]
         indexes = [models.Index(fields=["company", "account", "date"]),
                    models.Index(fields=["company", "partner", "account"]),
-                   models.Index(fields=["company", "account_type", "posted", "date"])]
+                   models.Index(fields=["company", "account_type", "posted", "date"]),
+                   models.Index(fields=["company", "branch", "posted", "date"], name="ledger_jour_branch_idx")]
         constraints = [
             models.CheckConstraint(condition=Q(debit__gte=0) & Q(credit__gte=0), name="line_non_negative"),
             models.CheckConstraint(condition=~(Q(debit__gt=0) & Q(credit__gt=0)), name="line_one_side"),

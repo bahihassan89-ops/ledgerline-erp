@@ -15,7 +15,7 @@ from django.utils import timezone
 
 from apps.core import audit
 from apps.core.exceptions import BusinessError
-from apps.core.models import ExchangeRate, Sequence
+from apps.core.models import Branch, ExchangeRate, Sequence
 from apps.core.money import ZERO, D, round_to
 
 from .models import (PL_CLASSES, Account, AccountingSettings, EntryState, FiscalPeriod, FiscalYear, Journal,
@@ -39,6 +39,16 @@ class LineSpec:
     quantity: Decimal = ZERO
     due_date: date_cls | None = None
     extra: dict = field(default_factory=dict)
+
+
+def default_branch(company) -> Branch:
+    """Every entry needs a branch; callers that don't operate multiple branches don't have to
+    think about it. Raises if setup_company hasn't run (every company is seeded with exactly
+    one `is_main` branch -- see Branch.Meta's one_main_branch_per_company constraint)."""
+    branch = Branch.objects.filter(company=company, is_main=True).first()
+    if not branch:
+        raise BusinessError("Company has no main branch. Run setup_company first.", "no_main_branch")
+    return branch
 
 
 def base_decimals(company) -> int:
@@ -167,14 +177,17 @@ def set_period_state(period, state, user):
 
 @transaction.atomic
 def create_entry(company, journal, on_date, lines, *, user=None, reference="", narration="",
-                 currency=None, rate=None, source=None, is_closing=False) -> JournalEntry:
+                 currency=None, rate=None, source=None, is_closing=False, branch=None) -> JournalEntry:
     if journal.company_id != company.pk:
         raise BusinessError("Journal belongs to another company.", "cross_company")
+    branch = branch or default_branch(company)
+    if branch.company_id != company.pk:
+        raise BusinessError("Branch belongs to another company.", "cross_company")
     currency_code = getattr(currency, "code", currency) or company.base_currency_id
     rate = resolve_rate(company, currency_code, on_date, rate)
     entry = JournalEntry.objects.create(
-        company=company, journal=journal, date=on_date, reference=reference[:120], narration=narration,
-        currency_id=currency_code, rate=rate, created_by=user, is_closing=is_closing,
+        company=company, journal=journal, branch=branch, date=on_date, reference=reference[:120],
+        narration=narration, currency_id=currency_code, rate=rate, created_by=user, is_closing=is_closing,
         source_type=source[0] if source else "", source_id=source[1] if source else None,
     )
     _write_lines(entry, lines)
@@ -196,7 +209,7 @@ def _write_lines(entry, lines):
             description=(s.description or "")[:255], debit=debit, credit=credit, currency_id=entry.currency_id,
             amount_currency=amount_currency, cost_center=s.cost_center, tax=s.tax, tax_base=D(s.tax_base),
             product=s.product, quantity=D(s.quantity), due_date=s.due_date, date=entry.date,
-            account_type=s.account.account_type,
+            account_type=s.account.account_type, branch_id=entry.branch_id,
         ))
     JournalLine.objects.bulk_create(objs)
 

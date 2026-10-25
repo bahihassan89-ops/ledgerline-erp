@@ -5,9 +5,9 @@ from rest_framework.response import Response
 from apps.iam.access import ErpPermission, resolve_company
 
 from .api import CompanyReadOnlyViewSet, CompanyViewSet
-from .models import AuditLog, Company, CostCenter, Currency, ExchangeRate
-from .serializers import (AuditLogSerializer, CompanySerializer, CostCenterSerializer, CurrencySerializer,
-                          ExchangeRateSerializer)
+from .models import AuditLog, Branch, Company, CostCenter, Currency, ExchangeRate
+from .serializers import (AuditLogSerializer, BranchSerializer, CompanySerializer, CostCenterSerializer,
+                          CurrencySerializer, ExchangeRateSerializer)
 
 
 class CurrencyViewSet(viewsets.ModelViewSet):
@@ -53,6 +53,14 @@ class CostCenterViewSet(CompanyViewSet):
     queryset = CostCenter.objects.all()
     serializer_class = CostCenterSerializer
     perms = {"list": "ledger.account.view", "*": "core.costcenter.manage"}
+    search_fields = ["code", "name"]
+    pagination_class = None
+
+
+class BranchViewSet(CompanyViewSet):
+    queryset = Branch.objects.all()
+    serializer_class = BranchSerializer
+    perms = {"list": "ledger.account.view", "*": "core.branch.manage"}
     search_fields = ["code", "name"]
     pagination_class = None
 

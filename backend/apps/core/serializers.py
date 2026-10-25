@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import AuditLog, Company, CostCenter, Currency, ExchangeRate
+from .models import AuditLog, Branch, Company, CostCenter, Currency, ExchangeRate
 from .serializers_base import CompanyScopedSerializer
 
 
@@ -39,6 +39,12 @@ class CostCenterSerializer(CompanyScopedSerializer):
     class Meta:
         model = CostCenter
         fields = ["id", "code", "name", "parent", "active"]
+
+
+class BranchSerializer(CompanyScopedSerializer):
+    class Meta:
+        model = Branch
+        fields = ["id", "code", "name", "address", "is_main", "active"]
 
 
 class AuditLogSerializer(serializers.ModelSerializer):

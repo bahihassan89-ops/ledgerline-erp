@@ -6,6 +6,7 @@ CATALOG = {
     "core.company.manage": "Edit company settings, lock date",
     "core.currency.manage": "Manage currencies and exchange rates",
     "core.costcenter.manage": "Manage cost centers",
+    "core.branch.manage": "Manage branches",
     "iam.user.view": "View users",
     "iam.user.manage": "Create/disable users, assign roles",
     "iam.role.manage": "Create and edit roles",
@@ -106,7 +107,8 @@ ACCOUNTANT = CLERK + [
 SENIOR = ACCOUNTANT + [
     "ledger.entry.reverse", "partners.partner.manage", "inventory.product.manage", "inventory.stock.adjust",
     "billing.invoice.cancel", "billing.bill.cancel", "sales.order.cancel", "purchasing.order.cancel",
-    "core.costcenter.manage", "assets.asset.manage", "inventory.landed_cost.manage", "planning.recurring.manage",
+    "core.costcenter.manage", "core.branch.manage", "assets.asset.manage", "inventory.landed_cost.manage",
+    "planning.recurring.manage",
     "manufacturing.bom.manage", "einvoice.document.cancel",
 ]
 CONTROLLER = SENIOR + [
