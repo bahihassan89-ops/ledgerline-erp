@@ -11,9 +11,9 @@ from apps.ledger.models import Account
 from apps.ledger.views import parse_date
 
 from . import services
-from .models import Lot, MoveType, Product, ProductCategory, StockMove, StockQuant, Warehouse
-from .serializers import (LotSerializer, ProductCategorySerializer, ProductSerializer, StockMoveSerializer,
-                          StockQuantSerializer, WarehouseSerializer)
+from .models import Lot, MoveType, Product, ProductCategory, SerialNumber, StockMove, StockQuant, Warehouse
+from .serializers import (LotSerializer, ProductCategorySerializer, ProductSerializer, SerialNumberSerializer,
+                          StockMoveSerializer, StockQuantSerializer, WarehouseSerializer)
 
 
 class ProductCategoryViewSet(CompanyViewSet):
@@ -44,6 +44,13 @@ class ProductViewSet(CompanyViewSet):
             raise BusinessError("Product has stock moves; deactivate it instead.", "in_use")
         instance.delete()
 
+    @action(detail=False, url_path="reorder-suggestions")
+    def reorder_suggestions(self, request):
+        """Simple MRP gap analysis: which products are (or will be) below their reorder level once
+        open purchase/manufacturing supply and open sales/manufacturing demand are netted off --
+        see services.reorder_suggestions."""
+        return Response(services.reorder_suggestions(self.company))
+
 
 class WarehouseViewSet(CompanyViewSet):
     queryset = Warehouse.objects.all()
@@ -72,6 +79,19 @@ class LotViewSet(CompanyViewSet):
         return Response(services.lot_genealogy(self.get_object()))
 
 
+class SerialNumberViewSet(CompanyViewSet):
+    queryset = SerialNumber.objects.select_related("product", "lot", "warehouse")
+    serializer_class = SerialNumberSerializer
+    perms = {"list": "inventory.stock.view", "history": "inventory.stock.view", "*": "inventory.product.manage"}
+    pagination_class = None
+    filterset_fields = ["product", "status", "warehouse"]
+    search_fields = ["serial_number", "product__sku"]
+
+    @action(detail=True)
+    def history(self, request, pk=None):
+        return Response(services.serial_history(self.get_object()))
+
+
 class StockOpSerializer(serializers.Serializer):
     product = serializers.IntegerField()
     warehouse = serializers.IntegerField()
@@ -83,6 +103,7 @@ class StockOpSerializer(serializers.Serializer):
     date = serializers.DateField(required=False)
     reason = serializers.CharField(required=False, allow_blank=True, max_length=200)
     lot_number = serializers.CharField(required=False, allow_blank=True, max_length=60)
+    serials = serializers.ListField(child=serializers.CharField(max_length=80), required=False)
 
 
 class StockMoveViewSet(CompanyReadOnlyViewSet):
@@ -123,7 +144,7 @@ class StockMoveViewSet(CompanyReadOnlyViewSet):
         acc = get_object_or_404(Account, pk=v["counter_account"], company=self.company)
         m = services.receive(self.company, v["product"], v["warehouse"], v["quantity"], v["unit_cost"], v["date"],
                              request.user, counter_account=acc, move_type=MoveType.OPENING,
-                             reference="Opening stock", lot_number=v.get("lot_number"))
+                             reference="Opening stock", lot_number=v.get("lot_number"), serials=v.get("serials"))
         return Response(StockMoveSerializer(m).data, status=201)
 
     @action(detail=False, methods=["post"])

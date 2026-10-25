@@ -18,6 +18,24 @@ class WorkCenter(CompanyScoped):
                                         help_text="Manufacturing overhead absorbed per hour")
     cost_center = models.ForeignKey("core.CostCenter", null=True, blank=True, on_delete=models.PROTECT,
                                     related_name="+")
+    # Capacity planning / finite scheduling (see manufacturing.services.schedule_operations): the work
+    # center can do `capacity_minutes_per_day` of work on each of `working_weekdays` (Python weekday
+    # numbers, Monday=0 .. Sunday=6); specific dates can override that via WorkCenterCalendarException
+    # (holidays, extra shifts, maintenance days).
+    capacity_minutes_per_day = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("480"),
+                                                    help_text="Minutes of work this center can absorb per working "
+                                                              "day (default 8-hour shift)")
+    working_weekdays = models.CharField(max_length=20, default="0,1,2,3,4",
+                                        help_text="Comma-separated weekday numbers the center normally runs "
+                                                  "(Monday=0 .. Sunday=6); default Mon-Fri")
+    # Subcontracting: an "external" work center operated by a vendor instead of in-house labour/
+    # overhead -- see manufacturing.services.record_subcontract_cost.
+    is_subcontracted = models.BooleanField(default=False,
+                                           help_text="Operations here are performed by an outside vendor; "
+                                                     "cost is the vendor's invoiced charge, not labour/overhead "
+                                                     "rates.")
+    default_vendor = models.ForeignKey("partners.Partner", null=True, blank=True, on_delete=models.PROTECT,
+                                       related_name="+")
     active = models.BooleanField(default=True)
 
     class Meta:
@@ -26,6 +44,27 @@ class WorkCenter(CompanyScoped):
 
     def __str__(self):
         return f"{self.code} {self.name}"
+
+    @property
+    def working_weekday_set(self):
+        return {int(x) for x in self.working_weekdays.split(",") if x.strip() != ""}
+
+
+@audited
+class WorkCenterCalendarException(CompanyScoped):
+    """Overrides a work center's normal daily capacity for one specific date: 0 minutes for a
+    holiday/shutdown, or a different figure for an extra shift or a half day."""
+    work_center = models.ForeignKey(WorkCenter, on_delete=models.CASCADE, related_name="calendar_exceptions")
+    date = models.DateField()
+    available_minutes = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
+    notes = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        unique_together = [("work_center", "date")]
+        ordering = ["date"]
+
+    def __str__(self):
+        return f"{self.work_center.code} {self.date}: {self.available_minutes}min"
 
 
 @audited
@@ -41,6 +80,11 @@ class Bom(CompanyScoped):
     product = models.ForeignKey("inventory.Product", on_delete=models.PROTECT, related_name="boms")
     quantity = models.DecimalField(**QTY, help_text="Output quantity this recipe produces")
     active = models.BooleanField(default=True)
+    backflush = models.BooleanField(default=False,
+                                    help_text="Auto-consume component quantities (at BOM ratios) when output is "
+                                              "recorded, instead of requiring an explicit consume() first. "
+                                              "Components that are themselves lot-tracked still need to be "
+                                              "consumed manually first, for traceability.")
     notes = models.TextField(blank=True)
 
     class Meta:
@@ -71,9 +115,26 @@ class BomOperation(models.Model):
     name = models.CharField(max_length=120)
     work_center = models.ForeignKey(WorkCenter, on_delete=models.PROTECT, related_name="+")
     minutes = models.DecimalField(max_digits=12, decimal_places=2, help_text="Minutes for the BOM quantity")
+    # Alternate routing: if the primary work center has no free capacity on the day the scheduler
+    # reaches this operation, it tries these (in order) instead -- see services.schedule_operations.
+    alternate_work_centers = models.ManyToManyField(WorkCenter, blank=True, related_name="+")
 
     class Meta:
         ordering = ["sequence", "id"]
+
+
+class BomByproduct(models.Model):
+    """A secondary output recovered from the same production run as the BOM's main product (e.g.
+    offcuts, by-product credited back at a standard value). `quantity` is per `bom.quantity` of main
+    output, mirroring BomComponent. `unit_value` is the standard recovery value per unit, since a
+    by-product has no BOM/average cost of its own -- it is valued the same way scrap would be."""
+    bom = models.ForeignKey(Bom, on_delete=models.CASCADE, related_name="byproducts")
+    product = models.ForeignKey("inventory.Product", on_delete=models.PROTECT, related_name="+")
+    quantity = models.DecimalField(**QTY)
+    unit_value = models.DecimalField(max_digits=20, decimal_places=6, default=Decimal("0"))
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=Q(quantity__gt=0), name="bom_byproduct_qty_positive")]
 
 
 class MoState(models.TextChoices):
@@ -100,6 +161,8 @@ class ManufacturingOrder(CompanyScoped):
     overhead_cost = models.DecimalField(**MONEY)
     output_value = models.DecimalField(**MONEY)
     scrap_value = models.DecimalField(**MONEY)
+    byproduct_value = models.DecimalField(**MONEY, help_text="Recovery value of by-products produced, credited "
+                                                              "against WIP (reduces the main product's cost)")
     date_done = models.DateField(null=True, blank=True)
     sales_order = models.ForeignKey("sales.SalesOrder", null=True, blank=True, on_delete=models.SET_NULL,
                                     related_name="+")
@@ -114,7 +177,8 @@ class ManufacturingOrder(CompanyScoped):
 
     @property
     def wip_balance(self):
-        return self.material_cost + self.labour_cost + self.overhead_cost - self.output_value - self.scrap_value
+        return (self.material_cost + self.labour_cost + self.overhead_cost - self.output_value - self.scrap_value
+                - self.byproduct_value)
 
 
 class MoComponent(models.Model):
@@ -125,15 +189,52 @@ class MoComponent(models.Model):
     consumed_value = models.DecimalField(**MONEY)
 
 
+class MoByproduct(models.Model):
+    mo = models.ForeignKey(ManufacturingOrder, on_delete=models.CASCADE, related_name="byproducts")
+    product = models.ForeignKey("inventory.Product", on_delete=models.PROTECT, related_name="+")
+    planned_qty = models.DecimalField(**QTY)
+    produced_qty = models.DecimalField(**QTY)
+    # Copied from BomByproduct.unit_value at confirm() time, so services._produce_byproducts can value
+    # the receipt even after the BOM is later revised/changed.
+    unit_value = models.DecimalField(max_digits=20, decimal_places=6, default=Decimal("0"))
+    value = models.DecimalField(**MONEY)
+
+
 class MoOperation(models.Model):
     mo = models.ForeignKey(ManufacturingOrder, on_delete=models.CASCADE, related_name="operations")
     sequence = models.PositiveIntegerField(default=10)
     name = models.CharField(max_length=120)
     work_center = models.ForeignKey(WorkCenter, on_delete=models.PROTECT, related_name="+")
+    # Copied from BomOperation.alternate_work_centers at confirm() time, so the schedule can swap to
+    # one of these if the primary work center has no free capacity -- see services.schedule_operations.
+    alternate_work_centers = models.ManyToManyField(WorkCenter, blank=True, related_name="+")
     planned_minutes = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
     actual_minutes = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0"))
     labour_cost = models.DecimalField(**MONEY)
     overhead_cost = models.DecimalField(**MONEY)
+    subcontract_cost = models.DecimalField(**MONEY, help_text="Vendor charge booked via "
+                                                               "services.record_subcontract_cost, for operations "
+                                                               "at a subcontracted work center")
+    scheduled_start = models.DateField(null=True, blank=True)
+    scheduled_end = models.DateField(null=True, blank=True)
 
     class Meta:
         ordering = ["sequence", "id"]
+
+
+class QualityInspection(CompanyScoped):
+    """A quality-control inspection event for a manufacturing order: the quality gate for products
+    with `Product.requires_qc` -- services.produce() will not release more finished-good units than
+    have been inspected and passed here (see services._consume_quality_pass)."""
+    mo = models.ForeignKey(ManufacturingOrder, on_delete=models.CASCADE, related_name="quality_inspections")
+    qty_passed = models.DecimalField(**QTY)
+    qty_failed = models.DecimalField(**QTY)
+    qty_used = models.DecimalField(**QTY, help_text="How much of qty_passed has already been turned into "
+                                                     "produced output")
+    notes = models.TextField(blank=True)
+    inspected_at = models.DateField()
+
+    class Meta:
+        ordering = ["inspected_at", "id"]
+        constraints = [models.CheckConstraint(condition=Q(qty_used__lte=models.F("qty_passed")),
+                                              name="qc_used_not_over_passed")]

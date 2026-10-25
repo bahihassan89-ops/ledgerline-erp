@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from apps.core.serializers_base import CompanyScopedSerializer
 
-from .models import Lot, Product, ProductCategory, StockMove, StockQuant, Warehouse
+from .models import Lot, Product, ProductCategory, SerialNumber, StockMove, StockQuant, Warehouse
 
 
 class ProductCategorySerializer(CompanyScopedSerializer):
@@ -36,7 +36,8 @@ class ProductSerializer(CompanyScopedSerializer):
         fields = ["id", "sku", "name", "name_ar", "eta_item_type", "eta_item_code", "eta_unit_type", "barcode",
                   "type", "category", "category_name", "uom", "sale_price",
                   "purchase_price", "sale_tax", "purchase_tax", "income_account", "expense_account", "reorder_level",
-                  "track_lots", "active", "qty_on_hand", "average_cost"]
+                  "reorder_qty", "track_lots", "track_serials", "requires_qc", "active", "qty_on_hand",
+                  "average_cost"]
 
     def get_qty_on_hand(self, obj):
         try:
@@ -70,6 +71,18 @@ class LotSerializer(CompanyScopedSerializer):
     class Meta:
         model = Lot
         fields = ["id", "product", "product_sku", "lot_number", "expiry_date", "notes"]
+
+
+class SerialNumberSerializer(CompanyScopedSerializer):
+    product_sku = serializers.CharField(source="product.sku", read_only=True)
+    warehouse_code = serializers.CharField(source="warehouse.code", read_only=True, default=None)
+    lot_number = serializers.CharField(source="lot.lot_number", read_only=True, default=None)
+
+    class Meta:
+        model = SerialNumber
+        fields = ["id", "product", "product_sku", "serial_number", "lot", "lot_number", "status", "warehouse",
+                  "warehouse_code", "notes"]
+        read_only_fields = ["status"]
 
 
 class StockMoveSerializer(serializers.ModelSerializer):

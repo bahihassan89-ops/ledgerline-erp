@@ -8,6 +8,7 @@ moves on the same product are serialized and costs stay correct.
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import F
 
 from apps.core import audit
 from apps.core.exceptions import BusinessError
@@ -15,7 +16,8 @@ from apps.core.models import Sequence
 from apps.core.money import ZERO, D, round_to
 from apps.ledger import services as gl
 
-from .models import INBOUND, CostLayer, CostMethod, Lot, MoveType, ProductValuation, StockMove, StockQuant
+from .models import (INBOUND, CostLayer, CostMethod, Lot, MoveType, ProductValuation, SerialNumber, SerialStatus,
+                     StockMove, StockMoveSerial, StockQuant)
 
 
 def _lock_valuation(company, product):
@@ -53,6 +55,51 @@ def _resolve_lot(company, product, lot, lot_number):
     return None
 
 
+def _resolve_serials(company, product, warehouse, qty, serials, inbound):
+    """Validate/create SerialNumber rows for a move of `qty` units. `serials` is a list of serial
+    number strings, one per unit -- required for products with track_serials. Inbound moves create
+    (or revalidate, e.g. for a customer return) the serial as `in_stock` at `warehouse`; outbound
+    moves require the serial to already exist and be in stock (status is finalised afterwards by
+    the caller, once the move type -- consumed / delivered / scrapped -- is known)."""
+    serials = serials or []
+    if not product.track_serials:
+        return []
+    if D(len(serials)) != D(qty):
+        raise BusinessError(f"{product} is serial-tracked: give exactly {qty} serial number(s) "
+                            f"(got {len(serials)}).", "serial_count_mismatch")
+    rows = []
+    for sn in serials:
+        if inbound:
+            s, _ = SerialNumber.objects.get_or_create(company=company, product=product, serial_number=sn,
+                                                       defaults={"status": SerialStatus.IN_STOCK,
+                                                                 "warehouse": warehouse})
+            s.status, s.warehouse = SerialStatus.IN_STOCK, warehouse
+            s.save(update_fields=["status", "warehouse"])
+        else:
+            s = SerialNumber.objects.filter(company=company, product=product, serial_number=sn).first()
+            if s is None:
+                raise BusinessError(f"Unknown serial number {sn} for {product}.", "unknown_serial")
+            if s.status != SerialStatus.IN_STOCK:
+                raise BusinessError(f"Serial {sn} is not in stock (status: {s.get_status_display()}).",
+                                    "serial_not_available")
+        rows.append(s)
+    return rows
+
+
+def _finalize_outbound_serials(serial_rows, move_type):
+    if not serial_rows:
+        return
+    if move_type == MoveType.PRODUCTION_CONSUME:
+        status = SerialStatus.CONSUMED
+    elif move_type == MoveType.ADJUST_OUT:
+        status = SerialStatus.SCRAPPED
+    else:
+        status = SerialStatus.DELIVERED
+    for s in serial_rows:
+        s.status = status
+        s.save(update_fields=["status"])
+
+
 def _inventory_account(product):
     return gl.require_account(product.category.inventory_account, f"inventory (category {product.category})")
 
@@ -83,9 +130,10 @@ def _post(company, move, debit_acc, credit_acc, user, partner=None, description=
 @transaction.atomic
 def receive(company, product, warehouse, qty, unit_cost, on_date, user, *, counter_account,
             move_type=MoveType.RECEIPT, partner=None, reference="", purchase_line=None, sales_line=None,
-            manufacturing_order=None, lot=None, lot_number=None):
+            manufacturing_order=None, lot=None, lot_number=None, serials=None):
     """Bring stock in at `unit_cost` (base currency). Credits `counter_account`. `lot`/`lot_number`
-    tags the move (and its cost layer) with a batch -- required if the product is lot-tracked."""
+    tags the move (and its cost layer) with a batch -- required if the product is lot-tracked.
+    `serials` (one per unit) is required if the product is serial-tracked."""
     _check(company, product, warehouse, qty)
     if move_type not in INBOUND:
         raise BusinessError("Not an inbound move type.", "invalid_move")
@@ -93,6 +141,7 @@ def receive(company, product, warehouse, qty, unit_cost, on_date, user, *, count
     if unit_cost < 0:
         raise BusinessError("Unit cost cannot be negative.", "invalid_cost")
     lot = _resolve_lot(company, product, lot, lot_number)
+    serial_rows = _resolve_serials(company, product, warehouse, qty, serials, inbound=True)
     val = _lock_valuation(company, product)
     quant = _lock_quant(company, product, warehouse)
     value = round_to(qty * unit_cost, gl.base_decimals(company))
@@ -103,6 +152,8 @@ def receive(company, product, warehouse, qty, unit_cost, on_date, user, *, count
         manufacturing_order=manufacturing_order, lot=lot, created_by=user)
     CostLayer.objects.create(company=company, product=product, move=move, lot=lot, date=on_date, quantity=qty,
                              unit_cost=unit_cost, value=value, remaining_qty=qty, remaining_value=value)
+    if serial_rows:
+        StockMoveSerial.objects.bulk_create([StockMoveSerial(move=move, serial=s) for s in serial_rows])
     val.quantity += qty
     val.value += value
     val.save()
@@ -117,16 +168,19 @@ def receive(company, product, warehouse, qty, unit_cost, on_date, user, *, count
 @transaction.atomic
 def issue(company, product, warehouse, qty, on_date, user, *, counter_account,
           move_type=MoveType.DELIVERY, partner=None, reference="", sales_line=None, purchase_line=None,
-          manufacturing_order=None, lot=None, lot_number=None):
+          manufacturing_order=None, lot=None, lot_number=None, serials=None):
     """Take stock out, costed by the product's method. Debits `counter_account` (e.g. COGS). When
     `lot`/`lot_number` is given on a FIFO-costed product, consumption is restricted to that lot's own
     cost layers (so genealogy is exact); average-cost products don't segregate value by lot, so the
-    lot is recorded on the move for traceability but doesn't change which value is drawn down."""
+    lot is recorded on the move for traceability but doesn't change which value is drawn down.
+    `serials` (one per unit) is required if the product is serial-tracked; each must already be in
+    stock -- its status is finalised (consumed/delivered/scrapped) according to `move_type`."""
     _check(company, product, warehouse, qty)
     if move_type in INBOUND:
         raise BusinessError("Not an outbound move type.", "invalid_move")
     qty = D(qty)
     lot = _resolve_lot(company, product, lot, lot_number)
+    serial_rows = _resolve_serials(company, product, warehouse, qty, serials, inbound=False)
     val = _lock_valuation(company, product)
     quant = _lock_quant(company, product, warehouse)
     if quant.quantity < qty:
@@ -170,6 +224,9 @@ def issue(company, product, warehouse, qty, on_date, user, *, counter_account,
         product=product, warehouse=warehouse, quantity=qty, unit_cost=unit_cost, value=value, partner=partner,
         reference=reference, sales_line=sales_line, purchase_line=purchase_line,
         manufacturing_order=manufacturing_order, lot=lot, created_by=user)
+    if serial_rows:
+        StockMoveSerial.objects.bulk_create([StockMoveSerial(move=move, serial=s) for s in serial_rows])
+    _finalize_outbound_serials(serial_rows, move_type)
     _post(company, move, counter_account, _inventory_account(product), user, partner)
     audit.record("stock_out", move, {"product": product.sku, "qty": qty, "value": value})
     _emit(company, move)
@@ -258,6 +315,76 @@ def lot_genealogy(lot):
             "produced_from": [_row(m) for m in produced_from],
             "forward_traceability": [_row(m) for m in forward],
             "backward_traceability": [_row(m) for m in backward]}
+
+
+def reorder_suggestions(company):
+    """Simple (un-timephased) MRP gap analysis: for every stockable product, net available = on-hand
+    + incoming (open PO lines + open MO output) - outstanding demand (open SO lines + open MO
+    component needs). Where net available falls below `Product.reorder_level`, suggest replenishing
+    up to `Product.reorder_qty` (0 means just reach the reorder level itself)."""
+    from apps.manufacturing.models import ManufacturingOrder, MoComponent, MoState
+    from apps.purchasing.models import PurchaseOrderLine
+    from apps.sales.models import OrderState, SalesOrderLine
+
+    from .models import Product
+
+    OPEN_MO_STATES = (MoState.DRAFT, MoState.CONFIRMED, MoState.IN_PROGRESS)
+    on_hand = {v.product_id: v.quantity for v in ProductValuation.objects.filter(company=company)}
+
+    incoming_po = {}
+    for line in (PurchaseOrderLine.objects.filter(order__company=company, order__state=OrderState.CONFIRMED)
+                 .exclude(quantity__lte=F("qty_received")).select_related("product")):
+        incoming_po[line.product_id] = incoming_po.get(line.product_id, ZERO) + (line.quantity - line.qty_received)
+
+    outgoing_so = {}
+    for line in (SalesOrderLine.objects.filter(order__company=company, order__state=OrderState.CONFIRMED)
+                 .exclude(quantity__lte=F("qty_delivered")).select_related("product")):
+        outgoing_so[line.product_id] = outgoing_so.get(line.product_id, ZERO) + (line.quantity - line.qty_delivered)
+
+    incoming_mo = {}
+    for mo in ManufacturingOrder.objects.filter(company=company, state__in=OPEN_MO_STATES):
+        remaining = mo.quantity - mo.produced_qty
+        if remaining > 0:
+            incoming_mo[mo.product_id] = incoming_mo.get(mo.product_id, ZERO) + remaining
+
+    outgoing_mo_component = {}
+    for comp in (MoComponent.objects.filter(mo__company=company, mo__state__in=OPEN_MO_STATES)
+                 .select_related("product")):
+        remaining = comp.planned_qty - comp.consumed_qty
+        if remaining > 0:
+            outgoing_mo_component[comp.product_id] = (outgoing_mo_component.get(comp.product_id, ZERO) + remaining)
+
+    rows = []
+    products = Product.objects.filter(company=company, type="stock", active=True).select_related("category")
+    for p in products:
+        if not p.reorder_level:
+            continue
+        net = (on_hand.get(p.pk, ZERO) + incoming_po.get(p.pk, ZERO) + incoming_mo.get(p.pk, ZERO)
+               - outgoing_so.get(p.pk, ZERO) - outgoing_mo_component.get(p.pk, ZERO))
+        if net < p.reorder_level:
+            target = p.reorder_qty if p.reorder_qty > 0 else p.reorder_level
+            rows.append({"product_id": p.pk, "sku": p.sku, "name": p.name, "on_hand": str(on_hand.get(p.pk, ZERO)),
+                        "incoming": str(incoming_po.get(p.pk, ZERO) + incoming_mo.get(p.pk, ZERO)),
+                        "outstanding_demand": str(outgoing_so.get(p.pk, ZERO) + outgoing_mo_component.get(p.pk, ZERO)),
+                        "net_available": str(net), "reorder_level": str(p.reorder_level),
+                        "suggested_qty": str(target - net)})
+    return rows
+
+
+def serial_history(serial):
+    """Trace a single serial number's movements (receipts, consumption, delivery, scrap) in order."""
+    links = (StockMoveSerial.objects.filter(serial=serial)
+             .select_related("move", "move__manufacturing_order", "move__product").order_by("move__date", "move__id"))
+
+    def _row(link):
+        m = link.move
+        return {"move_id": m.pk, "move_number": m.number, "move_type": m.move_type, "date": str(m.date),
+                "product": m.product.sku, "warehouse": m.warehouse.code,
+                "mo_number": m.manufacturing_order.number if m.manufacturing_order_id else None}
+
+    return {"serial": {"id": serial.pk, "product": serial.product.sku, "serial_number": serial.serial_number,
+                       "status": serial.status, "lot_number": serial.lot.lot_number if serial.lot_id else None},
+            "movements": [_row(l) for l in links]}
 
 
 def valuation_report(company):

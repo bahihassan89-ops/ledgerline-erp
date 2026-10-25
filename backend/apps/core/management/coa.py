@@ -70,6 +70,7 @@ CHART = [
                 ("210102", "Goods Received Not Invoiced (GRNI)", "بضاعة مستلمة لم ترد فواتيرها", "grni", C),
                 ("210103", "Notes Payable — Cheques Issued", "أوراق الدفع — شيكات صادرة", "notes_payable", C),
                 ("210104", "Landed Costs Clearing", "حساب وسيط تكاليف الاستيراد", "current_liability"),
+                ("210105", "Subcontracting Clearing", "حساب وسيط تصنيع لدى الغير", "current_liability"),
             ]),
             ("2102", "Accruals", "مصروفات مستحقة", "group", [
                 ("210201", "Accrued Salaries and Wages", "أجور ومرتبات مستحقة", "current_liability"),
@@ -207,5 +208,5 @@ DEFAULT_ACCOUNTS = {
     "unrealized_fx_loss_account": "530105", "asset_disposal_gain_account": "420103",
     "asset_disposal_loss_account": "530104", "landed_cost_clearing_account": "210104",
     "wip_account": "110304", "labour_absorbed_account": "510203", "overhead_absorbed_account": "510204",
-    "production_scrap_account": "510205",
+    "production_scrap_account": "510205", "subcontracting_clearing_account": "210105",
 }

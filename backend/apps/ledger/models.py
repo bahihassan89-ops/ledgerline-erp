@@ -277,6 +277,8 @@ class AccountingSettings(models.Model):
     labour_absorbed_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
     overhead_absorbed_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
     production_scrap_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
+    subcontracting_clearing_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT,
+                                                         related_name="+")
     depreciation_journal = models.ForeignKey(Journal, null=True, on_delete=models.PROTECT, related_name="+")
     opening_journal = models.ForeignKey(Journal, null=True, on_delete=models.PROTECT, related_name="+")
     sales_journal = models.ForeignKey(Journal, null=True, on_delete=models.PROTECT, related_name="+")

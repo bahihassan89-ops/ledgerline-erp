@@ -63,9 +63,18 @@ class Product(CompanyScoped):
     expense_account = models.ForeignKey("ledger.Account", null=True, blank=True, on_delete=models.PROTECT,
                                         related_name="+")
     reorder_level = models.DecimalField(**QTY)
+    reorder_qty = models.DecimalField(**QTY, help_text="Target quantity to replenish up to when below reorder "
+                                                        "level (0 = just replenish up to the reorder level "
+                                                        "itself) -- see inventory.services.reorder_suggestions")
     track_lots = models.BooleanField(default=False,
                                      help_text="Require a lot/batch number on every receipt and issue of this "
                                                "product, enabling genealogy traceability.")
+    track_serials = models.BooleanField(default=False,
+                                        help_text="Require a distinct serial number for every unit received and "
+                                                  "issued, for unit-level (not just batch-level) traceability.")
+    requires_qc = models.BooleanField(default=False,
+                                      help_text="Finished output of this product must pass a quality inspection "
+                                                "(manufacturing.services.inspect) before it can be produced.")
     active = models.BooleanField(default=True)
 
     class Meta:
@@ -115,6 +124,33 @@ class Lot(CompanyScoped):
 
     def __str__(self):
         return f"{self.product.sku} / {self.lot_number}"
+
+
+class SerialStatus(models.TextChoices):
+    IN_STOCK = "in_stock", "In stock"
+    CONSUMED = "consumed", "Consumed in production"
+    DELIVERED = "delivered", "Delivered / shipped out"
+    SCRAPPED = "scrapped", "Scrapped"
+
+
+@audited
+class SerialNumber(CompanyScoped):
+    """A single traceable unit of a `track_serials` product -- finer-grained than Lot, which only
+    tracks a whole batch. A serialised unit can optionally belong to a lot too (a serialised unit
+    produced from a particular batch). Which moves touched a given serial is in StockMoveSerial."""
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="serials")
+    serial_number = models.CharField(max_length=80)
+    lot = models.ForeignKey(Lot, null=True, blank=True, on_delete=models.SET_NULL, related_name="serials")
+    status = models.CharField(max_length=10, choices=SerialStatus.choices, default=SerialStatus.IN_STOCK)
+    warehouse = models.ForeignKey("Warehouse", null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        unique_together = [("company", "product", "serial_number")]
+        ordering = ["product__sku", "serial_number"]
+
+    def __str__(self):
+        return f"{self.product.sku} #{self.serial_number}"
 
 
 class StockQuant(models.Model):
@@ -193,6 +229,17 @@ class StockMove(CompanyScoped):
 
     def __str__(self):
         return self.number or f"Move #{self.pk}"
+
+
+class StockMoveSerial(models.Model):
+    """Which exact serial units a given StockMove touched -- a move's `quantity` can cover several
+    units at once; this is the per-unit breakdown (mirrors how CostLayer.lot narrows a move to a
+    batch, but at unit granularity). See inventory.services.serial_history."""
+    move = models.ForeignKey(StockMove, on_delete=models.CASCADE, related_name="serial_links")
+    serial = models.ForeignKey(SerialNumber, on_delete=models.PROTECT, related_name="move_links")
+
+    class Meta:
+        unique_together = [("move", "serial")]
 
 
 class CostLayer(models.Model):

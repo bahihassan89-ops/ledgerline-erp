@@ -11,8 +11,8 @@ from apps.core.views import (AuditLogViewSet, BranchViewSet, CompanyViewSetCurre
 from apps.iam import auth_views
 from apps.iam.views import PermissionCatalogView, RoleViewSet, UserViewSet
 from apps.integrations.views import ApiKeyViewSet, WebhookDeliveryViewSet, WebhookViewSet
-from apps.inventory.views import (LotViewSet, ProductCategoryViewSet, ProductViewSet, StockMoveViewSet,
-                                  StockQuantViewSet, WarehouseViewSet)
+from apps.inventory.views import (LotViewSet, ProductCategoryViewSet, ProductViewSet, SerialNumberViewSet,
+                                  StockMoveViewSet, StockQuantViewSet, WarehouseViewSet)
 from apps.ledger.dashboard import DashboardView
 from apps.ledger.views import (AccountingSettingsView, AccountViewSet, FiscalPeriodViewSet, FiscalYearViewSet,
                                JournalEntryViewSet, JournalViewSet, ReportView, TaxViewSet)
@@ -25,7 +25,8 @@ from apps.core.attachments import AttachmentViewSet
 from apps.einvoice.api import EtaDocumentViewSet, EtaSettingsView
 from apps.inventory.views import LandedCostViewSet
 from apps.ledger.period_views import ChecklistView, ImportView, RevaluationView
-from apps.manufacturing.api import BomViewSet, ManufacturingOrderViewSet, WorkCenterViewSet
+from apps.manufacturing.api import (BomViewSet, ManufacturingOrderViewSet, WorkCenterCalendarExceptionViewSet,
+                                    WorkCenterViewSet)
 from apps.planning.api import BudgetViewSet, RecurringViewSet
 
 r = DefaultRouter()
@@ -68,8 +69,10 @@ r.register("attachments", AttachmentViewSet, basename="attachment")
 r.register("eta-documents", EtaDocumentViewSet)
 r.register("landed-costs", LandedCostViewSet)
 r.register("work-centers", WorkCenterViewSet)
+r.register("work-center-calendar-exceptions", WorkCenterCalendarExceptionViewSet)
 r.register("boms", BomViewSet)
 r.register("manufacturing-orders", ManufacturingOrderViewSet)
+r.register("serial-numbers", SerialNumberViewSet)
 r.register("budgets", BudgetViewSet)
 r.register("recurring-entries", RecurringViewSet)
 
