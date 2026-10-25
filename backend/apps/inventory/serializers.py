@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from apps.core.serializers_base import CompanyScopedSerializer
 
-from .models import Product, ProductCategory, StockMove, StockQuant, Warehouse
+from .models import Lot, Product, ProductCategory, StockMove, StockQuant, Warehouse
 
 
 class ProductCategorySerializer(CompanyScopedSerializer):
@@ -36,7 +36,7 @@ class ProductSerializer(CompanyScopedSerializer):
         fields = ["id", "sku", "name", "name_ar", "eta_item_type", "eta_item_code", "eta_unit_type", "barcode",
                   "type", "category", "category_name", "uom", "sale_price",
                   "purchase_price", "sale_tax", "purchase_tax", "income_account", "expense_account", "reorder_level",
-                  "active", "qty_on_hand", "average_cost"]
+                  "track_lots", "active", "qty_on_hand", "average_cost"]
 
     def get_qty_on_hand(self, obj):
         try:
@@ -64,17 +64,28 @@ class WarehouseSerializer(CompanyScopedSerializer):
         fields = ["id", "code", "name", "address", "active"]
 
 
+class LotSerializer(CompanyScopedSerializer):
+    product_sku = serializers.CharField(source="product.sku", read_only=True)
+
+    class Meta:
+        model = Lot
+        fields = ["id", "product", "product_sku", "lot_number", "expiry_date", "notes"]
+
+
 class StockMoveSerializer(serializers.ModelSerializer):
     product_sku = serializers.CharField(source="product.sku", read_only=True)
     product_name = serializers.CharField(source="product.name", read_only=True)
     warehouse_code = serializers.CharField(source="warehouse.code", read_only=True)
     entry_number = serializers.CharField(source="journal_entry.number", read_only=True, default=None)
+    lot_number = serializers.CharField(source="lot.lot_number", read_only=True, default=None)
+    manufacturing_order_number = serializers.CharField(source="manufacturing_order.number", read_only=True,
+                                                        default=None)
 
     class Meta:
         model = StockMove
         fields = ["id", "number", "date", "move_type", "product", "product_sku", "product_name", "warehouse",
                   "warehouse_code", "quantity", "unit_cost", "value", "partner", "reference", "journal_entry",
-                  "entry_number"]
+                  "entry_number", "lot", "lot_number", "manufacturing_order", "manufacturing_order_number"]
 
 
 class StockQuantSerializer(serializers.ModelSerializer):

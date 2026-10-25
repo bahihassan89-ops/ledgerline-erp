@@ -11,8 +11,8 @@ from apps.core.views import (AuditLogViewSet, BranchViewSet, CompanyViewSetCurre
 from apps.iam import auth_views
 from apps.iam.views import PermissionCatalogView, RoleViewSet, UserViewSet
 from apps.integrations.views import ApiKeyViewSet, WebhookDeliveryViewSet, WebhookViewSet
-from apps.inventory.views import (ProductCategoryViewSet, ProductViewSet, StockMoveViewSet, StockQuantViewSet,
-                                  WarehouseViewSet)
+from apps.inventory.views import (LotViewSet, ProductCategoryViewSet, ProductViewSet, StockMoveViewSet,
+                                  StockQuantViewSet, WarehouseViewSet)
 from apps.ledger.dashboard import DashboardView
 from apps.ledger.views import (AccountingSettingsView, AccountViewSet, FiscalPeriodViewSet, FiscalYearViewSet,
                                JournalEntryViewSet, JournalViewSet, ReportView, TaxViewSet)
@@ -50,6 +50,7 @@ r.register("products", ProductViewSet)
 r.register("warehouses", WarehouseViewSet)
 r.register("stock-moves", StockMoveViewSet)
 r.register("stock-levels", StockQuantViewSet)
+r.register("lots", LotViewSet)
 r.register("invoices", CustomerInvoiceViewSet, basename="invoice")
 r.register("bills", VendorBillViewSet, basename="bill")
 r.register("payments", PaymentViewSet)

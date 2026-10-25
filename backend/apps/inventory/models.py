@@ -63,6 +63,9 @@ class Product(CompanyScoped):
     expense_account = models.ForeignKey("ledger.Account", null=True, blank=True, on_delete=models.PROTECT,
                                         related_name="+")
     reorder_level = models.DecimalField(**QTY)
+    track_lots = models.BooleanField(default=False,
+                                     help_text="Require a lot/batch number on every receipt and issue of this "
+                                               "product, enabling genealogy traceability.")
     active = models.BooleanField(default=True)
 
     class Meta:
@@ -95,6 +98,23 @@ class Warehouse(CompanyScoped):
 
     def __str__(self):
         return f"{self.code} {self.name}"
+
+
+@audited
+class Lot(CompanyScoped):
+    """A lot/batch of a product. Genealogy (which input lots went into which output lot) is derived
+    from StockMove.lot + StockMove.manufacturing_order: see inventory.services.lot_genealogy()."""
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="lots")
+    lot_number = models.CharField(max_length=60)
+    expiry_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        unique_together = [("company", "product", "lot_number")]
+        ordering = ["product__sku", "lot_number"]
+
+    def __str__(self):
+        return f"{self.product.sku} / {self.lot_number}"
 
 
 class StockQuant(models.Model):
@@ -161,6 +181,7 @@ class StockMove(CompanyScoped):
                                             on_delete=models.PROTECT, related_name="moves")
     journal_entry = models.ForeignKey("ledger.JournalEntry", null=True, blank=True, on_delete=models.PROTECT,
                                       related_name="+")
+    lot = models.ForeignKey(Lot, null=True, blank=True, on_delete=models.PROTECT, related_name="moves")
 
     class Meta:
         ordering = ["-date", "-id"]
@@ -175,10 +196,12 @@ class StockMove(CompanyScoped):
 
 
 class CostLayer(models.Model):
-    """One layer per inbound move. FIFO consumes `remaining_qty` oldest first."""
+    """One layer per inbound move. FIFO consumes `remaining_qty` oldest first (restricted to a single
+    lot when the outbound move specifies one, for exact lot genealogy on FIFO-costed products)."""
     company = models.ForeignKey("core.Company", on_delete=models.PROTECT, related_name="+")
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="layers")
     move = models.OneToOneField(StockMove, on_delete=models.PROTECT, related_name="layer")
+    lot = models.ForeignKey(Lot, null=True, blank=True, on_delete=models.PROTECT, related_name="layers")
     date = models.DateField()
     quantity = models.DecimalField(**QTY)
     unit_cost = models.DecimalField(max_digits=20, decimal_places=6)

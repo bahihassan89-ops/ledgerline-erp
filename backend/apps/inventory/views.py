@@ -11,9 +11,9 @@ from apps.ledger.models import Account
 from apps.ledger.views import parse_date
 
 from . import services
-from .models import MoveType, Product, ProductCategory, StockMove, StockQuant, Warehouse
-from .serializers import (ProductCategorySerializer, ProductSerializer, StockMoveSerializer, StockQuantSerializer,
-                          WarehouseSerializer)
+from .models import Lot, MoveType, Product, ProductCategory, StockMove, StockQuant, Warehouse
+from .serializers import (LotSerializer, ProductCategorySerializer, ProductSerializer, StockMoveSerializer,
+                          StockQuantSerializer, WarehouseSerializer)
 
 
 class ProductCategoryViewSet(CompanyViewSet):
@@ -59,6 +59,19 @@ class StockQuantViewSet(CompanyReadOnlyViewSet):
     filterset_fields = ["product", "warehouse"]
 
 
+class LotViewSet(CompanyViewSet):
+    queryset = Lot.objects.select_related("product")
+    serializer_class = LotSerializer
+    perms = {"list": "inventory.stock.view", "genealogy": "inventory.stock.view", "*": "inventory.product.manage"}
+    pagination_class = None
+    filterset_fields = ["product"]
+    search_fields = ["lot_number", "product__sku"]
+
+    @action(detail=True)
+    def genealogy(self, request, pk=None):
+        return Response(services.lot_genealogy(self.get_object()))
+
+
 class StockOpSerializer(serializers.Serializer):
     product = serializers.IntegerField()
     warehouse = serializers.IntegerField()
@@ -69,6 +82,7 @@ class StockOpSerializer(serializers.Serializer):
     counter_account = serializers.IntegerField(required=False)
     date = serializers.DateField(required=False)
     reason = serializers.CharField(required=False, allow_blank=True, max_length=200)
+    lot_number = serializers.CharField(required=False, allow_blank=True, max_length=60)
 
 
 class StockMoveViewSet(CompanyReadOnlyViewSet):
@@ -108,7 +122,8 @@ class StockMoveViewSet(CompanyReadOnlyViewSet):
             raise serializers.ValidationError("quantity, unit_cost and counter_account are required.")
         acc = get_object_or_404(Account, pk=v["counter_account"], company=self.company)
         m = services.receive(self.company, v["product"], v["warehouse"], v["quantity"], v["unit_cost"], v["date"],
-                             request.user, counter_account=acc, move_type=MoveType.OPENING, reference="Opening stock")
+                             request.user, counter_account=acc, move_type=MoveType.OPENING,
+                             reference="Opening stock", lot_number=v.get("lot_number"))
         return Response(StockMoveSerializer(m).data, status=201)
 
     @action(detail=False, methods=["post"])

@@ -15,7 +15,7 @@ from apps.core.models import Sequence
 from apps.core.money import ZERO, D, round_to
 from apps.ledger import services as gl
 
-from .models import INBOUND, CostLayer, CostMethod, MoveType, ProductValuation, StockMove, StockQuant
+from .models import INBOUND, CostLayer, CostMethod, Lot, MoveType, ProductValuation, StockMove, StockQuant
 
 
 def _lock_valuation(company, product):
@@ -35,6 +35,22 @@ def _check(company, product, warehouse, qty):
         raise BusinessError(f"{product} is not a stockable product.", "not_stockable")
     if D(qty) <= 0:
         raise BusinessError("Quantity must be positive.", "invalid_qty")
+
+
+def _resolve_lot(company, product, lot, lot_number):
+    """Validate/create the Lot for a move. Lot-tracked products must supply one (either an existing
+    Lot instance or a lot_number to get-or-create); other products may optionally tag a lot too."""
+    if lot is not None:
+        if lot.company_id != company.pk or lot.product_id != product.pk:
+            raise BusinessError(f"Lot {lot.lot_number} does not belong to {product} in this company.",
+                                "invalid_lot")
+        return lot
+    if lot_number:
+        lot, _ = Lot.objects.get_or_create(company=company, product=product, lot_number=lot_number)
+        return lot
+    if product.track_lots:
+        raise BusinessError(f"{product} is lot-tracked: a lot/batch number is required.", "lot_required")
+    return None
 
 
 def _inventory_account(product):
@@ -67,14 +83,16 @@ def _post(company, move, debit_acc, credit_acc, user, partner=None, description=
 @transaction.atomic
 def receive(company, product, warehouse, qty, unit_cost, on_date, user, *, counter_account,
             move_type=MoveType.RECEIPT, partner=None, reference="", purchase_line=None, sales_line=None,
-            manufacturing_order=None):
-    """Bring stock in at `unit_cost` (base currency). Credits `counter_account`."""
+            manufacturing_order=None, lot=None, lot_number=None):
+    """Bring stock in at `unit_cost` (base currency). Credits `counter_account`. `lot`/`lot_number`
+    tags the move (and its cost layer) with a batch -- required if the product is lot-tracked."""
     _check(company, product, warehouse, qty)
     if move_type not in INBOUND:
         raise BusinessError("Not an inbound move type.", "invalid_move")
     qty, unit_cost = D(qty), D(unit_cost)
     if unit_cost < 0:
         raise BusinessError("Unit cost cannot be negative.", "invalid_cost")
+    lot = _resolve_lot(company, product, lot, lot_number)
     val = _lock_valuation(company, product)
     quant = _lock_quant(company, product, warehouse)
     value = round_to(qty * unit_cost, gl.base_decimals(company))
@@ -82,8 +100,8 @@ def receive(company, product, warehouse, qty, unit_cost, on_date, user, *, count
         company=company, number=_number(company, on_date, True), date=on_date, move_type=move_type,
         product=product, warehouse=warehouse, quantity=qty, unit_cost=unit_cost, value=value, partner=partner,
         reference=reference, purchase_line=purchase_line, sales_line=sales_line,
-        manufacturing_order=manufacturing_order, created_by=user)
-    CostLayer.objects.create(company=company, product=product, move=move, date=on_date, quantity=qty,
+        manufacturing_order=manufacturing_order, lot=lot, created_by=user)
+    CostLayer.objects.create(company=company, product=product, move=move, lot=lot, date=on_date, quantity=qty,
                              unit_cost=unit_cost, value=value, remaining_qty=qty, remaining_value=value)
     val.quantity += qty
     val.value += value
@@ -99,12 +117,16 @@ def receive(company, product, warehouse, qty, unit_cost, on_date, user, *, count
 @transaction.atomic
 def issue(company, product, warehouse, qty, on_date, user, *, counter_account,
           move_type=MoveType.DELIVERY, partner=None, reference="", sales_line=None, purchase_line=None,
-          manufacturing_order=None):
-    """Take stock out, costed by the product's method. Debits `counter_account` (e.g. COGS)."""
+          manufacturing_order=None, lot=None, lot_number=None):
+    """Take stock out, costed by the product's method. Debits `counter_account` (e.g. COGS). When
+    `lot`/`lot_number` is given on a FIFO-costed product, consumption is restricted to that lot's own
+    cost layers (so genealogy is exact); average-cost products don't segregate value by lot, so the
+    lot is recorded on the move for traceability but doesn't change which value is drawn down."""
     _check(company, product, warehouse, qty)
     if move_type in INBOUND:
         raise BusinessError("Not an outbound move type.", "invalid_move")
     qty = D(qty)
+    lot = _resolve_lot(company, product, lot, lot_number)
     val = _lock_valuation(company, product)
     quant = _lock_quant(company, product, warehouse)
     if quant.quantity < qty:
@@ -113,8 +135,10 @@ def issue(company, product, warehouse, qty, on_date, user, *, counter_account,
     decimals = gl.base_decimals(company)
     if product.category.cost_method == CostMethod.FIFO:
         value, need = ZERO, qty
-        for layer in (CostLayer.objects.select_for_update()
-                      .filter(product=product, remaining_qty__gt=0).order_by("date", "id")):
+        layers = CostLayer.objects.select_for_update().filter(product=product, remaining_qty__gt=0)
+        if lot is not None:
+            layers = layers.filter(lot=lot)
+        for layer in layers.order_by("date", "id"):
             take = min(need, layer.remaining_qty)
             if take == layer.remaining_qty:
                 part = layer.remaining_value
@@ -128,7 +152,8 @@ def issue(company, product, warehouse, qty, on_date, user, *, counter_account,
             if need == 0:
                 break
         if need > 0:
-            raise BusinessError(f"Cost layers for {product.sku} are short by {need}.", "layers_short")
+            what = f"lot {lot.lot_number} of {product.sku}" if lot is not None else f"{product.sku}"
+            raise BusinessError(f"Cost layers for {what} are short by {need}.", "layers_short")
     else:
         if qty == val.quantity:
             value = val.value  # last units take the remaining value: no rounding residue
@@ -144,7 +169,7 @@ def issue(company, product, warehouse, qty, on_date, user, *, counter_account,
         company=company, number=_number(company, on_date, False), date=on_date, move_type=move_type,
         product=product, warehouse=warehouse, quantity=qty, unit_cost=unit_cost, value=value, partner=partner,
         reference=reference, sales_line=sales_line, purchase_line=purchase_line,
-        manufacturing_order=manufacturing_order, created_by=user)
+        manufacturing_order=manufacturing_order, lot=lot, created_by=user)
     _post(company, move, counter_account, _inventory_account(product), user, partner)
     audit.record("stock_out", move, {"product": product.sku, "qty": qty, "value": value})
     _emit(company, move)
@@ -201,6 +226,38 @@ def _emit(company, move):
     emit(company, "stock.moved", {"id": move.pk, "number": move.number, "type": move.move_type,
                                   "product": move.product.sku, "warehouse": move.warehouse.code,
                                   "quantity": move.quantity, "value": move.value})
+
+
+def lot_genealogy(lot):
+    """Trace a lot forward (which finished-good lots it was consumed into, via manufacturing orders)
+    and backward (which input lots were consumed into it, if it is itself a manufactured output).
+    Traceability is derived purely from StockMove.lot + StockMove.manufacturing_order -- no separate
+    genealogy table is needed since every consumption/production move already carries both."""
+    consumed_in = (StockMove.objects.filter(lot=lot, move_type=MoveType.PRODUCTION_CONSUME)
+                   .select_related("manufacturing_order").order_by("date", "id"))
+    mo_ids_consumed_into = {m.manufacturing_order_id for m in consumed_in if m.manufacturing_order_id}
+    produced_from = (StockMove.objects.filter(lot=lot, move_type=MoveType.PRODUCTION_OUTPUT)
+                     .select_related("manufacturing_order").order_by("date", "id"))
+    mo_ids_produced_by = {m.manufacturing_order_id for m in produced_from if m.manufacturing_order_id}
+
+    forward = list(StockMove.objects.filter(manufacturing_order_id__in=mo_ids_consumed_into,
+                                            move_type=MoveType.PRODUCTION_OUTPUT)
+                   .select_related("lot", "manufacturing_order", "product").order_by("date", "id"))
+    backward = list(StockMove.objects.filter(manufacturing_order_id__in=mo_ids_produced_by,
+                                             move_type=MoveType.PRODUCTION_CONSUME)
+                    .select_related("lot", "manufacturing_order", "product").order_by("date", "id"))
+
+    def _row(m):
+        return {"move_id": m.pk, "mo_number": m.manufacturing_order.number if m.manufacturing_order_id else None,
+                "product": m.product.sku, "lot_number": m.lot.lot_number if m.lot_id else None,
+                "quantity": str(m.quantity), "date": str(m.date)}
+
+    return {"lot": {"id": lot.pk, "product": lot.product.sku, "lot_number": lot.lot_number,
+                    "expiry_date": str(lot.expiry_date) if lot.expiry_date else None},
+            "consumed_into": [_row(m) for m in consumed_in],
+            "produced_from": [_row(m) for m in produced_from],
+            "forward_traceability": [_row(m) for m in forward],
+            "backward_traceability": [_row(m) for m in backward]}
 
 
 def valuation_report(company):

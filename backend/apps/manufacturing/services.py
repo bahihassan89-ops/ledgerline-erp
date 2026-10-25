@@ -20,7 +20,7 @@ from apps.inventory import services as stock
 from apps.inventory.models import MoveType
 from apps.ledger import services as gl
 
-from .models import ManufacturingOrder, MoComponent, MoOperation, MoState
+from .models import Bom, BomComponent, BomOperation, ManufacturingOrder, MoComponent, MoOperation, MoState
 
 
 def _accounts(company):
@@ -31,15 +31,56 @@ def _accounts(company):
             gl.require_account(st.production_scrap_account, "production scrap"))
 
 
-def planned_cost(bom, qty):
-    """Standard-style estimate from current average costs and work-center rates."""
+def planned_cost(bom, qty, _seen=None):
+    """Standard-style estimate from current average costs and work-center rates. Recurses through
+    sub-assembly levels: if a component is itself a manufactured product with its own active BOM, its
+    planned cost (material + conversion) is rolled up instead of using its (likely stale/zero) average
+    cost -- this is what makes multi-level BOMs cost correctly."""
+    _seen = _seen or set()
+    if bom.pk in _seen:
+        return {"material": ZERO, "conversion": ZERO, "total": ZERO}  # defensive: cycle guard
+    _seen = _seen | {bom.pk}
     factor = D(qty) / bom.quantity
-    material = sum((c.quantity * factor * (1 + c.scrap_pct / 100) * c.product.valuation.average_cost
-                    if hasattr(c.product, "valuation") else ZERO for c in bom.components.select_related("product")),
-                   ZERO)
+    material = ZERO
+    for c in bom.components.select_related("product", "product__valuation"):
+        c_qty = c.quantity * factor * (1 + c.scrap_pct / 100)
+        sub_bom = c.product.boms.filter(active=True).first()
+        if sub_bom is not None:
+            material += planned_cost(sub_bom, c_qty, _seen)["total"]
+        elif hasattr(c.product, "valuation"):
+            material += c_qty * c.product.valuation.average_cost
     conv = sum((op.minutes * factor / 60 * (op.work_center.labour_rate + op.work_center.overhead_rate)
                 for op in bom.operations.select_related("work_center")), ZERO)
     return {"material": round_to(material, 2), "conversion": round_to(conv, 2), "total": round_to(material + conv, 2)}
+
+
+@transaction.atomic
+def revise_bom(bom, user):
+    """Create the next version of a BOM: copies code/product/quantity/notes/components/operations onto
+    a new row, marks the old version inactive, and the new version active. Unlike editing a BOM in
+    place, this is always allowed (even while open MOs reference the old version), because it never
+    touches the version those orders already locked in -- it only affects *new* orders created after
+    this point. This is the "create a new BOM version instead" path that BomSerializer.update() points
+    to when it refuses an in-place edit of a BOM already used by an open order."""
+    bom = Bom.objects.select_for_update().prefetch_related("components", "operations").get(pk=bom.pk)
+    if not bom.active:
+        raise BusinessError("Only the active version of a BOM can be revised.", "not_active")
+    components = list(bom.components.all())
+    operations = list(bom.operations.all())
+    # Deactivate the old version first: "one active version per code" is enforced by a partial unique
+    # constraint, so the new (active) row can only be inserted once the old one has stepped aside.
+    bom.active = False
+    bom.save(update_fields=["active", "updated_at"])
+    new = Bom.objects.create(company=bom.company, code=bom.code, version=bom.version + 1, revises=bom,
+                             product=bom.product, quantity=bom.quantity, active=True, notes=bom.notes,
+                             created_by=user)
+    for c in components:
+        BomComponent.objects.create(bom=new, product=c.product, quantity=c.quantity, scrap_pct=c.scrap_pct)
+    for op in operations:
+        BomOperation.objects.create(bom=new, sequence=op.sequence, name=op.name, work_center=op.work_center,
+                                    minutes=op.minutes)
+    audit.record("revise", new, {"code": new.code, "from_version": bom.version, "to_version": new.version})
+    return new
 
 
 @transaction.atomic
@@ -72,20 +113,25 @@ def _open(mo):
 
 
 @transaction.atomic
-def consume(mo, user, quantities=None, on_date=None):
-    """Issue components to WIP. quantities: {component_line_id: qty}; default = remaining planned."""
+def consume(mo, user, quantities=None, on_date=None, lots=None):
+    """Issue components to WIP. quantities: {component_line_id: qty}; default = remaining planned.
+    lots: {component_line_id: lot_number}, for lot-tracked components -- restricts FIFO consumption
+    to that lot (see inventory.services.issue) so the raw-material batch is traceable into this MO."""
     mo = ManufacturingOrder.objects.select_for_update().get(pk=mo.pk)
     _open(mo)
     wip, *_ = _accounts(mo.company)
     on_date = on_date or timezone.localdate()
+    lots = lots or {}
     moves = []
     for c in mo.components.select_for_update().select_related("product", "product__category"):
         qty = D(quantities.get(c.pk, quantities.get(str(c.pk), 0))) if quantities is not None else \
             max(ZERO, c.planned_qty - c.consumed_qty)
         if qty <= 0:
             continue
+        lot_number = lots.get(c.pk) or lots.get(str(c.pk))
         m = stock.issue(mo.company, c.product, mo.warehouse, qty, on_date, user, counter_account=wip,
-                        move_type=MoveType.PRODUCTION_CONSUME, reference=mo.number, manufacturing_order=mo)
+                        move_type=MoveType.PRODUCTION_CONSUME, reference=mo.number, manufacturing_order=mo,
+                        lot_number=lot_number)
         c.consumed_qty += qty
         c.consumed_value += m.value
         c.save()
@@ -138,10 +184,12 @@ def record_operations(mo, user, minutes, on_date=None):
 
 
 @transaction.atomic
-def produce(mo, user, qty, scrap_qty=0, on_date=None, finish=False):
+def produce(mo, user, qty, scrap_qty=0, on_date=None, finish=False, lot_number=None):
     """Receive finished goods at actual cost. While the order stays open, output is valued at the
     average WIP per unit still to be produced; `finish` closes the order and clears all remaining WIP
-    (into the goods produced now, scrap at the same unit cost)."""
+    (into the goods produced now, scrap at the same unit cost). `lot_number` tags the produced batch
+    (required if the finished product is lot-tracked), the other end of the genealogy chain started
+    by the lots consumed in `consume()` -- see inventory.services.lot_genealogy()."""
     mo = ManufacturingOrder.objects.select_for_update().select_related("product").get(pk=mo.pk)
     _open(mo)
     wip, _, _, scrap_acc = _accounts(mo.company)
@@ -162,7 +210,7 @@ def produce(mo, user, qty, scrap_qty=0, on_date=None, finish=False):
     if qty:
         move = stock.receive(mo.company, mo.product, mo.warehouse, qty, good_value / qty, on_date, user,
                              counter_account=wip, move_type=MoveType.PRODUCTION_OUTPUT, reference=mo.number,
-                             manufacturing_order=mo)
+                             manufacturing_order=mo, lot_number=lot_number)
         good_value = move.value  # after rounding of unit cost × qty
         scrap_value = portion - good_value
     if scrap_value:

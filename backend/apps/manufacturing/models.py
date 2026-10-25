@@ -30,19 +30,28 @@ class WorkCenter(CompanyScoped):
 
 @audited
 class Bom(CompanyScoped):
+    """A BOM is versioned: editing components/operations of a version already used by an open
+    manufacturing order is blocked (see BomSerializer.update) -- instead, `services.revise_bom()`
+    creates a new version (same code, version+1) that starts as the active one, and deactivates the
+    old version. Only one version per (company, code) may be active at a time."""
     code = models.CharField(max_length=40)
+    version = models.PositiveIntegerField(default=1)
+    revises = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="revisions",
+                                help_text="The version this one supersedes")
     product = models.ForeignKey("inventory.Product", on_delete=models.PROTECT, related_name="boms")
     quantity = models.DecimalField(**QTY, help_text="Output quantity this recipe produces")
     active = models.BooleanField(default=True)
     notes = models.TextField(blank=True)
 
     class Meta:
-        unique_together = [("company", "code")]
-        ordering = ["code"]
-        constraints = [models.CheckConstraint(condition=Q(quantity__gt=0), name="bom_qty_positive")]
+        unique_together = [("company", "code", "version")]
+        ordering = ["code", "-version"]
+        constraints = [models.CheckConstraint(condition=Q(quantity__gt=0), name="bom_qty_positive"),
+                       models.UniqueConstraint(fields=["company", "code"], condition=Q(active=True),
+                                               name="one_active_bom_version_per_code")]
 
     def __str__(self):
-        return f"{self.code} — {self.product}"
+        return f"{self.code} v{self.version} — {self.product}"
 
 
 class BomComponent(models.Model):

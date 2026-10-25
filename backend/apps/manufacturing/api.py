@@ -41,12 +41,25 @@ class BomSerializer(CompanyScopedSerializer):
 
     class Meta:
         model = Bom
-        fields = ["id", "code", "product", "product_name", "quantity", "active", "notes", "components", "operations",
-                  "planned_unit_cost"]
+        fields = ["id", "code", "version", "revises", "product", "product_name", "quantity", "active", "notes",
+                  "components", "operations", "planned_unit_cost"]
+        read_only_fields = ["version", "revises"]
 
     def get_planned_unit_cost(self, obj):
         p = services.planned_cost(obj, obj.quantity)
         return {k: str(v / obj.quantity) for k, v in p.items()}
+
+    def _descendant_product_ids(self, product, seen=None):
+        """Every product reachable by following active sub-assembly BOMs down from `product` --
+        used to reject a component that would close a cycle (direct or through several levels)."""
+        seen = seen or set()
+        if product.pk in seen:
+            return seen
+        seen = seen | {product.pk}
+        for sub_bom in product.boms.filter(active=True):
+            for c in sub_bom.components.select_related("product"):
+                seen |= self._descendant_product_ids(c.product, seen)
+        return seen
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -56,6 +69,10 @@ class BomSerializer(CompanyScopedSerializer):
                 raise serializers.ValidationError("A product cannot be a component of itself.")
             if not c["product"].is_stock:
                 raise serializers.ValidationError(f"Component {c['product'].sku} must be a stockable product.")
+            if product and product.pk in self._descendant_product_ids(c["product"]):
+                raise serializers.ValidationError(
+                    f"Using {c['product'].sku} here would create a circular BOM: it is (directly or through "
+                    f"a sub-assembly) built from {product.sku}.")
         return attrs
 
     @transaction.atomic
@@ -136,8 +153,16 @@ class WorkCenterViewSet(CompanyViewSet):
 class BomViewSet(CompanyViewSet):
     queryset = Bom.objects.select_related("product").prefetch_related("components__product", "operations")
     serializer_class = BomSerializer
-    perms = {"list": "manufacturing.order.view", "*": "manufacturing.bom.manage"}
+    perms = {"list": "manufacturing.order.view", "revise": "manufacturing.bom.manage", "*": "manufacturing.bom.manage"}
     pagination_class = None
+    filterset_fields = ["code", "product", "active"]
+
+    @action(detail=True, methods=["post"])
+    def revise(self, request, pk=None):
+        """Start a new version of this BOM (see services.revise_bom): always allowed, even while open
+        manufacturing orders use the current version -- unlike editing components/operations in place."""
+        new = services.revise_bom(self.get_object(), request.user)
+        return Response(self.get_serializer(new).data, status=201)
 
 
 class ManufacturingOrderViewSet(CompanyViewSet):
@@ -163,7 +188,8 @@ class ManufacturingOrderViewSet(CompanyViewSet):
 
     @action(detail=True, methods=["post"])
     def consume(self, request, pk=None):
-        services.consume(self.get_object(), request.user, request.data.get("quantities"), self._d(request))
+        services.consume(self.get_object(), request.user, request.data.get("quantities"), self._d(request),
+                         request.data.get("lots"))
         return Response(self.get_serializer(self.get_object()).data)
 
     @action(detail=True, methods=["post"], url_path="record-operations")
@@ -174,7 +200,8 @@ class ManufacturingOrderViewSet(CompanyViewSet):
     @action(detail=True, methods=["post"])
     def produce(self, request, pk=None):
         services.produce(self.get_object(), request.user, request.data.get("quantity") or 0,
-                         request.data.get("scrap_quantity") or 0, self._d(request), bool(request.data.get("finish")))
+                         request.data.get("scrap_quantity") or 0, self._d(request), bool(request.data.get("finish")),
+                         request.data.get("lot_number"))
         return Response(self.get_serializer(self.get_object()).data)
 
     @action(detail=True, methods=["post"])
