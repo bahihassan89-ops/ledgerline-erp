@@ -20,7 +20,13 @@ EXPENSE_TYPES = [t for t, cls in ACCOUNT_TYPES.items() if cls == AccountClass.EX
 
 
 def _bal(qs):
-    a = qs.aggregate(d=Sum("debit"), c=Sum("credit"))
+    # .order_by() with no args strips JournalLine's default Meta.ordering (entry_id, sequence,
+    # id). Without it, .aggregate() on a plain (non-values/annotate) queryset still sorts by
+    # that ordering before collapsing to the sum -- pointless for a scalar aggregate, but under
+    # load testing at ~1M lines it forced a full external-merge sort of every matching row,
+    # roughly 5x slower than the aggregate itself. .values().annotate() group-by queries
+    # elsewhere in this codebase aren't affected (GROUP BY already drops row-level ordering).
+    a = qs.order_by().aggregate(d=Sum("debit"), c=Sum("credit"))
     return (a["d"] or ZERO) - (a["c"] or ZERO)
 
 

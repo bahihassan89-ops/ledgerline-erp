@@ -37,7 +37,10 @@ from django.db import connection, transaction
 from apps.core.models import Company
 from apps.iam.models import User
 from apps.ledger import services as svc
-from apps.ledger.models import Account, EntryState, Journal, JournalEntry, JournalLine
+from apps.ledger.models import ACCOUNT_TYPES, Account, AccountClass, EntryState, Journal, JournalEntry, JournalLine
+
+INCOME_TYPES = [t for t, cls in ACCOUNT_TYPES.items() if cls == AccountClass.INCOME]
+EXPENSE_TYPES = [t for t, cls in ACCOUNT_TYPES.items() if cls == AccountClass.EXPENSE]
 
 START_DATE = date(2023, 1, 1)
 END_DATE = date(2026, 10, 22)
@@ -201,14 +204,18 @@ class Command(BaseCommand):
             .order_by("-date", "-id")[:50]))
         timed("journal entry search by number prefix", lambda: list(
             JournalEntry.objects.filter(company=company, number__startswith="LT/2026").order_by("-date")[:50]))
+        # These two mirror apps/ledger/dashboard.py's actual queries (denormalized
+        # JournalLine.account_type, not a join to ledger_account; .order_by() cleared before
+        # the plain aggregate -- see dashboard._bal()) rather than a stale simulation of them,
+        # so this harness catches regressions in the real dashboard code, not a stand-in for it.
         timed("dashboard-style 12-month income/expense trend", lambda: list(
             JournalLine.objects.filter(company=company, posted=True, date__gte=date(2025, 11, 1),
-                                       account__account_class__in=["income", "expense"])
-            .annotate(m=TruncMonth("date")).values("m", "account__account_class")
+                                       account_type__in=INCOME_TYPES + EXPENSE_TYPES)
+            .annotate(m=TruncMonth("date")).values("m", "account_type")
             .annotate(d=Sum("debit"), cr=Sum("credit"))))
         timed("dashboard-style cash balance aggregate", lambda: JournalLine.objects.filter(
-            company=company, posted=True, account__account_type__in=["bank", "cash"])
-            .aggregate(d=Sum("debit"), c=Sum("credit")))
+            company=company, posted=True, account_type__in=["bank", "cash"])
+            .order_by().aggregate(d=Sum("debit"), c=Sum("credit")))
         with connection.cursor() as cur:
             cur.execute("SELECT pg_size_pretty(pg_total_relation_size('ledger_journalentry')), "
                        "pg_size_pretty(pg_total_relation_size('ledger_journalline')), "
