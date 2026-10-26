@@ -215,6 +215,10 @@ class MoOperation(models.Model):
     subcontract_cost = models.DecimalField(**MONEY, help_text="Vendor charge booked via "
                                                                "services.record_subcontract_cost, for operations "
                                                                "at a subcontracted work center")
+    subcontract_billed = models.DecimalField(**MONEY, help_text="Portion of subcontract_cost already billed "
+                                                                 "via services.create_subcontract_bill; "
+                                                                 "subcontract_cost - subcontract_billed is what "
+                                                                 "is still outstanding on Subcontracting Clearing")
     scheduled_start = models.DateField(null=True, blank=True)
     scheduled_end = models.DateField(null=True, blank=True)
 

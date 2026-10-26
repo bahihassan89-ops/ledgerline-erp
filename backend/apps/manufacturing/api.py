@@ -150,8 +150,9 @@ class MoOperationSerializer(serializers.ModelSerializer):
     class Meta:
         model = MoOperation
         fields = ["id", "name", "work_center", "work_center_code", "alternate_work_centers", "planned_minutes",
-                  "actual_minutes", "labour_cost", "overhead_cost", "subcontract_cost", "scheduled_start",
-                  "scheduled_end"]
+                  "actual_minutes", "labour_cost", "overhead_cost", "subcontract_cost", "subcontract_billed",
+                  "scheduled_start", "scheduled_end"]
+        read_only_fields = ["subcontract_billed"]
 
 
 class MoByproductSerializer(serializers.ModelSerializer):
@@ -239,7 +240,7 @@ class ManufacturingOrderViewSet(CompanyViewSet):
                                                                                      "operations__work_center")
     serializer_class = MoSerializer
     perms = {"list": "manufacturing.order.view", "costs": "manufacturing.order.view", "wip": "manufacturing.order.view",
-             "*": "manufacturing.order.manage"}
+             "bill_subcontract": "billing.bill.create", "*": "manufacturing.order.manage"}
     filterset_fields = ["state", "product"]
     search_fields = ["number", "product__sku", "product__name"]
 
@@ -278,6 +279,18 @@ class ManufacturingOrderViewSet(CompanyViewSet):
         services.record_subcontract_cost(self.get_object(), request.user, request.data.get("operation"),
                                          request.data.get("amount") or 0, self._d(request))
         return Response(self.get_serializer(self.get_object()).data, status=201)
+
+    @action(detail=True, methods=["post"], url_path="bill-subcontract")
+    def bill_subcontract(self, request, pk=None):
+        """Draft a vendor bill for a subcontracted operation's charge (see
+        services.create_subcontract_bill) -- cannot exceed what record_subcontract_cost already
+        charged to WIP for that operation."""
+        from apps.billing.serializers import InvoiceSerializer
+        bill = services.create_subcontract_bill(self.get_object(), request.user, request.data.get("operation"),
+                                                 request.data.get("amount") or 0, self._d(request),
+                                                 request.data.get("vendor_reference", ""),
+                                                 request.data.get("tax"))
+        return Response(InvoiceSerializer(bill, context=self.get_serializer_context()).data, status=201)
 
     @action(detail=True, methods=["post"])
     def inspect(self, request, pk=None):

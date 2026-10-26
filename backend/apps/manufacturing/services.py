@@ -327,6 +327,43 @@ def record_subcontract_cost(mo, user, op_id, amount, on_date=None):
 
 
 @transaction.atomic
+def create_subcontract_bill(mo, user, op_id, amount, on_date=None, vendor_reference="", tax=None):
+    """Draft a vendor bill for a subcontracted operation's charge, referencing the operation
+    (InvoiceLine.mo_operation) so it can never bill more than record_subcontract_cost actually
+    charged to WIP. Posting the bill (apps.billing.services.post_invoice) debits Subcontracting
+    Clearing and credits Accounts Payable, exactly how a stock bill clears GRNI."""
+    from apps.billing.models import Invoice, InvoiceLine, InvoiceType
+    from apps.billing.services import recompute
+
+    mo = ManufacturingOrder.objects.select_for_update().select_related("company").get(pk=mo.pk)
+    op = mo.operations.select_related("work_center", "work_center__default_vendor").get(pk=op_id)
+    if not op.work_center.is_subcontracted:
+        raise BusinessError(f"{op.work_center} is not a subcontracted work center.", "not_subcontracted")
+    vendor = op.work_center.default_vendor
+    if not vendor:
+        raise BusinessError(f"{op.work_center} has no default vendor.", "no_vendor")
+    amount = D(amount)
+    outstanding = op.subcontract_cost - op.subcontract_billed
+    if amount <= 0 or amount > outstanding:
+        raise BusinessError(f"Can bill at most {outstanding} (already charged to WIP, not yet billed).",
+                            "over_bill")
+    st = gl.settings_for(mo.company)
+    acc = gl.require_account(st.subcontracting_clearing_account, "subcontracting clearing")
+    bill = Invoice.objects.create(company=mo.company, move_type=InvoiceType.IN_INVOICE, partner=vendor,
+                                  date=on_date or timezone.localdate(), currency=mo.company.base_currency,
+                                  payment_term=vendor.payment_term, reference=vendor_reference,
+                                  created_by=user)
+    InvoiceLine.objects.create(invoice=bill, sequence=0, description=f"Subcontract {op.name} — {mo.number}",
+                               account=acc, quantity=Decimal("1"), unit_price=amount, tax=tax,
+                               mo_operation=op, withholding_tax=vendor.withholding_tax)
+    recompute(bill)
+    op.subcontract_billed += amount
+    op.save(update_fields=["subcontract_billed"])
+    audit.record("create_subcontract_bill", mo, {"operation": op.name, "bill": bill.pk, "amount": amount})
+    return bill
+
+
+@transaction.atomic
 def inspect(mo, user, qty_passed, qty_failed=0, notes="", on_date=None):
     """Record a quality-control inspection of finished output for a `requires_qc` product. Passed
     quantity becomes available for produce() to release (see _consume_quality_pass); failed quantity

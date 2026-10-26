@@ -112,6 +112,10 @@ class InvoiceLine(models.Model):
                                    related_name="invoice_lines")
     purchase_line = models.ForeignKey("purchasing.PurchaseOrderLine", null=True, blank=True,
                                       on_delete=models.PROTECT, related_name="bill_lines")
+    mo_operation = models.ForeignKey("manufacturing.MoOperation", null=True, blank=True,
+                                     on_delete=models.PROTECT, related_name="subcontract_bill_lines",
+                                     help_text="Set when this line bills a subcontractor for an operation's "
+                                               "charge -- see manufacturing.services.create_subcontract_bill")
 
     class Meta:
         ordering = ["sequence", "id"]
