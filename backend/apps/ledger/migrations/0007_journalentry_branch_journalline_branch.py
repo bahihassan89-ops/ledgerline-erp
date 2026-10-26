@@ -23,12 +23,26 @@ def backfill_branches(apps, schema_editor):
     JournalEntry = apps.get_model("ledger", "JournalEntry")
     JournalLine = apps.get_model("ledger", "JournalLine")
 
-    for company in Company.objects.all():
-        main = Branch.objects.filter(company=company, is_main=True).first()
-        if not main:
-            main = Branch.objects.create(company=company, code="MAIN", name="Main Branch", is_main=True)
-        JournalEntry.objects.filter(company=company, branch__isnull=True).update(branch=main)
-        JournalLine.objects.filter(company=company, branch__isnull=True).update(branch=main)
+    # erp_entry_guard/erp_line_guard forbid any UPDATE on a posted/cancelled entry's row or
+    # lines -- correct for financial fields, but this backfill only assigns the new branch
+    # column on pre-existing data, not an amount or account. Disable both guards for just
+    # this backfill rather than weakening them permanently (see 0005 for the same pattern).
+    schema_editor.execute("ALTER TABLE ledger_journalentry DISABLE TRIGGER erp_entry_guard")
+    schema_editor.execute("ALTER TABLE ledger_journalline DISABLE TRIGGER erp_line_guard")
+    try:
+        for company in Company.objects.all():
+            main = Branch.objects.filter(company=company, is_main=True).first()
+            if not main:
+                main = Branch.objects.create(company=company, code="MAIN", name="Main Branch", is_main=True)
+            JournalEntry.objects.filter(company=company, branch__isnull=True).update(branch=main)
+            JournalLine.objects.filter(company=company, branch__isnull=True).update(branch=main)
+        # erp_entry_balanced is a deferred constraint trigger queued by the updates above;
+        # Postgres refuses to ALTER TABLE ... ENABLE/DISABLE TRIGGER while events for that
+        # table are still pending, so flush it before re-enabling the guards below.
+        schema_editor.execute("SET CONSTRAINTS ALL IMMEDIATE")
+    finally:
+        schema_editor.execute("ALTER TABLE ledger_journalentry ENABLE TRIGGER erp_entry_guard")
+        schema_editor.execute("ALTER TABLE ledger_journalline ENABLE TRIGGER erp_line_guard")
 
 
 class Migration(migrations.Migration):

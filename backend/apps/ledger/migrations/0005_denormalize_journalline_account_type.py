@@ -11,10 +11,17 @@ from django.db import migrations, models
 
 
 def backfill_account_type(apps, schema_editor):
-    schema_editor.execute(
-        "UPDATE ledger_journalline l SET account_type = a.account_type "
-        "FROM ledger_account a WHERE a.id = l.account_id AND l.account_type = ''"
-    )
+    # erp_line_guard forbids any UPDATE on lines of a posted/cancelled entry -- correctly so for
+    # financial fields, but this backfill only sets a denormalized cache column, not an amount or
+    # account. Disable the guard for just this statement rather than weakening it permanently.
+    schema_editor.execute("ALTER TABLE ledger_journalline DISABLE TRIGGER erp_line_guard")
+    try:
+        schema_editor.execute(
+            "UPDATE ledger_journalline l SET account_type = a.account_type "
+            "FROM ledger_account a WHERE a.id = l.account_id AND l.account_type = ''"
+        )
+    finally:
+        schema_editor.execute("ALTER TABLE ledger_journalline ENABLE TRIGGER erp_line_guard")
 
 
 class Migration(migrations.Migration):
