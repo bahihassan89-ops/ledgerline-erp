@@ -9,12 +9,13 @@ import { invalidateOptions, useFetch } from '../lib/hooks'
 export default function Partners({ kind }: { kind: 'customer' | 'vendor' }) {
   const { can } = useAuth()
   const [search, setSearch] = useState('')
-  const { data, reload } = useFetch<any>('/partners/', { [`is_${kind}`]: true, search, page_size: 200 })
+  const { data, error, reload } = useFetch<any>('/partners/', { [`is_${kind}`]: true, search, page_size: 200 })
   const [edit, setEdit] = useState<any>(null)
   const [stmt, setStmt] = useState<any>(null)
   return (
     <>
       <PageHead title={kind === 'customer' ? 'Customers' : 'Vendors'} actions={can('partners.partner.manage') && <button className="primary" onClick={() => setEdit({ [`is_${kind}`]: true })}>+ New {kind}</button>} />
+      {error && <div className="alert bad">{error}</div>}
       <div className="card">
         <div className="toolbar"><input placeholder="Search code, name, email, tax no…" value={search} onChange={(e) => setSearch(e.target.value)} /></div>
         <DataTable rows={data?.results} onRow={setEdit} cols={[

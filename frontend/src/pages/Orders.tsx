@@ -17,12 +17,13 @@ export default function Orders({ kind }: { kind: Kind }) {
   const cfg = CFG[kind]
   const { can } = useAuth()
   const [f, setF] = useState({ search: '', state: '' })
-  const { data, reload } = useFetch<any>(cfg.base, { ...f, page_size: 100 })
+  const { data, error, reload } = useFetch<any>(cfg.base, { ...f, page_size: 100 })
   const [open, setOpen] = useState<any>(null)
   return (
     <>
       <PageHead title={cfg.title} sub={kind === 'sales' ? 'Quotation → confirmed order (credit check & approval) → delivery → invoice.' : 'RFQ → approved order → goods receipt → vendor bill (3-way match).'}
         actions={can(`${cfg.p}.create`) && <button className="primary" onClick={() => setOpen({})}>+ New {cfg.doc}</button>} />
+      {error && <div className="alert bad">{error}</div>}
       <div className="card">
         <div className="toolbar">
           <input placeholder="Search…" value={f.search} onChange={(e) => setF({ ...f, search: e.target.value })} />
@@ -78,7 +79,7 @@ function OrderEditor({ kind, order, onClose, onChanged }: { kind: Kind; order: a
     <Modal wide onClose={onClose} title={<>{o?.number || (o ? `${cfg.doc} #${o.id}` : `New ${cfg.doc}`)} {o && <StateBadge state={o.state} />}</>}
       footer={<>
         {o && editable && can(`${cfg.p}.create`) && <button className="danger" onClick={async () => { if (window.confirm('Delete?') && await run(() => del(`${cfg.base}${o.id}/`)) !== undefined) { onChanged(); onClose() } }}>Delete</button>}
-        {o && ['draft', 'approved', 'confirmed', 'to_approve'].includes(o.state) && can(`${cfg.p}.cancel`) && <button className="danger" onClick={async () => { const r = await run(() => post(`${cfg.base}${o.id}/cancel/`, {}), 'Cancelled'); if (r) { setO(r); onChanged() } }}>Cancel order</button>}
+        {o && ['draft', 'approved', 'confirmed', 'to_approve'].includes(o.state) && can(`${cfg.p}.cancel`) && <button className="danger" onClick={async () => { if (!window.confirm(`Cancel this ${cfg.doc}?`)) return; const r = await run(() => post(`${cfg.base}${o.id}/cancel/`, {}), 'Cancelled'); if (r) { setO(r); onChanged() } }}>Cancel order</button>}
         <span style={{ flex: 1 }} />
         {o?.state === 'confirmed' && outstandingMove && can('inventory.stock.move') && <button onClick={() => setMove(true)}>{cfg.moveLabel}</button>}
         {o?.state === 'confirmed' && can(cfg.invPerm) && <button onClick={makeInvoice}>{cfg.invLabel}</button>}

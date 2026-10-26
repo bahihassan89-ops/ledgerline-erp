@@ -6,7 +6,9 @@ Each request carries:
 """
 import hashlib
 import hmac
+import http.client
 import json
+import socket
 import time
 import urllib.request
 from datetime import timedelta
@@ -16,7 +18,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.integrations.models import WebhookDelivery
-from apps.integrations.serializers import assert_public_url
+from apps.integrations.serializers import resolve_validated_ip
 
 MAX_ATTEMPTS = 8
 
@@ -26,16 +28,42 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None  # never follow redirects (SSRF)
 
 
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """Connects to a pre-validated IP instead of re-resolving the hostname, so there is no
+    second DNS lookup an attacker could rebind between validation and connection. TLS is still
+    done against the real hostname (SNI + certificate check), only the socket address is pinned."""
+    def __init__(self, host, pinned_ip, **kwargs):
+        super().__init__(host, **kwargs)
+        self._pinned_ip = pinned_ip
+
+    def connect(self):
+        sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
+        context = self._context
+        self.sock = context.wrap_socket(sock, server_hostname=self.host)
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, pinned_ip, *a, **k):
+        super().__init__(*a, **k)
+        self._pinned_ip = pinned_ip
+
+    def https_open(self, req):
+        return self.do_open(lambda host, **kw: _PinnedHTTPSConnection(host, self._pinned_ip, **kw), req)
+
+
 def send(d):
     body = json.dumps(d.payload, separators=(",", ":"), sort_keys=True).encode()
     ts = str(int(time.time()))
     sig = hmac.new(d.webhook.secret.encode(), ts.encode() + b"." + body, hashlib.sha256).hexdigest()
-    assert_public_url(d.webhook.url)  # re-check at send time (DNS may have changed)
+    pinned_ip = resolve_validated_ip(d.webhook.url)  # re-validated at send time; DNS may have changed
     req = urllib.request.Request(d.webhook.url, data=body, method="POST", headers={
         "Content-Type": "application/json", "User-Agent": "Ledgerline-ERP-Webhooks/1.0",
         "X-ERP-Event": d.event, "X-ERP-Delivery": d.event_id, "X-ERP-Timestamp": ts,
         "X-ERP-Signature": f"sha256={sig}"})
-    opener = urllib.request.build_opener(_NoRedirect)
+    handlers = [_NoRedirect()]
+    if pinned_ip:  # None only in the DEBUG-only private-webhooks escape hatch
+        handlers.append(_PinnedHTTPSHandler(pinned_ip))
+    opener = urllib.request.build_opener(*handlers)
     with opener.open(req, timeout=10) as resp:
         return resp.status
 

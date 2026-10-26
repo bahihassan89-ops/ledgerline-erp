@@ -20,7 +20,7 @@ const debitNormal = (c: string) => c === 'asset' || c === 'expense'
 export default function Accounts() {
   const { can } = useAuth()
   const nav = useNavigate()
-  const { data, reload } = useFetch<any[]>('/accounts/tree/')
+  const { data, error, reload } = useFetch<any[]>('/accounts/tree/')
   const [open, setOpen] = useState<Record<number, boolean>>({})
   const [q, setQ] = useState('')
   const [maxLevel, setMaxLevel] = useState(4)
@@ -48,6 +48,7 @@ export default function Accounts() {
     <>
       <PageHead title="Chart of Accounts" sub="Four-level tree: class → group → sub-group → postable ledger account. Balances are cumulative, in base currency."
         actions={can('ledger.account.manage') && <button className="primary" onClick={() => setEdit({})}>+ New account</button>} />
+      {error && <div className="alert bad">{error}</div>}
       <div className="card">
         <div className="toolbar">
           <input placeholder="Search code or name…" value={q} onChange={(e) => setQ(e.target.value)} />

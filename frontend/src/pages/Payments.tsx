@@ -10,12 +10,13 @@ export default function Payments({ direction }: { direction: 'inbound' | 'outbou
   const inbound = direction === 'inbound'
   const { can } = useAuth()
   const [search, setSearch] = useState('')
-  const { data, reload } = useFetch<any>('/payments/', { direction, search, page_size: 100 })
+  const { data, error, reload } = useFetch<any>('/payments/', { direction, search, page_size: 100 })
   const [open, setOpen] = useState<any>(null)
   return (
     <>
       <PageHead title={inbound ? 'Customer Receipts' : 'Vendor Payments'} sub={inbound ? 'Money received from customers, applied to their invoices.' : 'Money paid to vendors, applied to their bills.'}
         actions={can('billing.payment.create') && <button className="primary" onClick={() => setOpen({})}>+ New {inbound ? 'receipt' : 'payment'}</button>} />
+      {error && <div className="alert bad">{error}</div>}
       <div className="card">
         <div className="toolbar"><input placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} /></div>
         <DataTable rows={data?.results} onRow={setOpen} cols={[
@@ -119,13 +120,14 @@ export function Cheques() {
   const { can } = useAuth()
   const [direction, setDirection] = useState('inbound')
   const [state, setState] = useState('')
-  const { data, reload } = useFetch<any>('/payments/cheques/', { direction, state })
+  const { data, error, reload } = useFetch<any>('/payments/cheques/', { direction, state })
   const { run } = useAction()
   const act = async (id: number, path: string, body: any, msg: string) => { if (await run(() => post(`/payments/${id}/${path}/`, body), msg)) reload() }
   const total = (data?.rows || []).filter((r: any) => ['in_hand', 'deposited', 'issued'].includes(r.state)).reduce((s: number, r: any) => s + num(r.amount), 0)
   return (
     <>
       <PageHead title={direction === 'inbound' ? 'Cheques Received — حافظة أوراق القبض' : 'Cheques Issued — أوراق الدفع'} sub="Post-dated cheques stay in the notes account until the bank clears them. A bounced cheque reopens the invoices it paid." />
+      {error && <div className="alert bad">{error}</div>}
       <div className="card">
         <div className="toolbar">
           <select value={direction} onChange={(e) => setDirection(e.target.value)}><option value="inbound">Received from customers</option><option value="outbound">Issued to vendors</option></select>

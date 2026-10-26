@@ -113,8 +113,10 @@ def confirm(asset, user):
     else:
         asset.state = AssetState.RUNNING
     asset.save(update_fields=["state", "updated_at"])
-    compute_schedule(asset)
-    audit.record("confirm", asset, {"cost": asset.cost, "life": asset.useful_life_months})
+    schedule = compute_schedule(asset)
+    audit.record("confirm", asset, {"cost": asset.cost, "life": asset.useful_life_months,
+                                     "schedule_lines": len(schedule),
+                                     "schedule_total": sum((l.amount for l in schedule), ZERO)})
     return asset
 
 

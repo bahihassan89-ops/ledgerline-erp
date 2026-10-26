@@ -18,20 +18,21 @@ export default function Documents({ kind }: { kind: Kind }) {
   const cfg = CFG[kind]
   const { can } = useAuth()
   const [f, setF] = useState({ search: '', state: '', payment_state: '', move_type: '' })
-  const { data, reload } = useFetch<any>(cfg.base, { ...f, page_size: 100 })
+  const { data, error, reload } = useFetch<any>(cfg.base, { ...f, page_size: 100 })
+  const balance = useFetch<any>(`${cfg.base}open-balance/`, f)
   const [open, setOpen] = useState<any>(null)
-  const totalDue = (data?.results || []).filter((r: any) => r.state === 'posted').reduce((s: number, r: any) => s + num(r.amount_residual) * num(r.rate) * (r.move_type.endsWith('refund') ? -1 : 1), 0)
   return (
     <>
       <PageHead title={cfg.title} sub={kind === 'invoices' ? 'Accounts receivable: what customers owe you.' : 'Accounts payable: what you owe vendors. Bills from purchase orders are matched to receipts (3-way match).'}
         actions={can(`${cfg.p}.create`) && <button className="primary" onClick={() => setOpen({ move_type: cfg.types[0][0] })}>+ New {cfg.what}</button>} />
+      {error && <div className="alert bad">{error}</div>}
       <div className="card">
         <div className="toolbar">
           <input placeholder="Search number, reference, partner…" value={f.search} onChange={(e) => setF({ ...f, search: e.target.value })} />
           <select value={f.move_type} onChange={(e) => setF({ ...f, move_type: e.target.value })}><option value="">All types</option>{cfg.types.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
           <select value={f.state} onChange={(e) => setF({ ...f, state: e.target.value })}><option value="">All states</option><option value="draft">Draft</option><option value="to_approve">Waiting approval</option><option value="posted">Posted</option><option value="cancelled">Cancelled</option></select>
           <select value={f.payment_state} onChange={(e) => setF({ ...f, payment_state: e.target.value })}><option value="">Any payment</option><option value="not_paid">Unpaid</option><option value="partial">Partially paid</option><option value="paid">Paid</option></select>
-          <span style={{ flex: 1 }} /><span className="muted">Open balance (base): <b>{money(totalDue)}</b></span>
+          <span style={{ flex: 1 }} /><span className="muted">Open balance (base): <b>{money(num(balance.data?.total))}</b></span>
         </div>
         <DataTable rows={data?.results} onRow={setOpen} cols={[
           { key: 'number', title: 'Number', render: (r) => <span className="mono">{r.number || `Draft #${r.id}`}</span> },
@@ -110,7 +111,7 @@ export function DocEditor({ kind, doc, defaults, onClose, onChanged }: { kind: K
         <span style={{ flex: 1 }} />
         {d && <button onClick={() => window.open(`/print/${kind}/${d.id}`, '_blank')}>Print</button>}
         {d?.state === 'posted' && can(`${cfg.p}.cancel`) && !d.move_type.endsWith('refund') && <button onClick={() => { const reason = window.prompt('Reason for the credit/debit note?'); if (reason === null) return; const ret = window.confirm('Are goods physically being returned to stock?\n\nOK = yes, create stock moves · Cancel = price/allowance only'); act('refund', `${cfg.types[1][1]} draft created`, { reason, return_to_stock: ret }) }}>Create {cfg.types[1][1].toLowerCase()}</button>}
-        {kind === 'invoices' && d?.state === 'posted' && d.move_type === 'out_invoice' && can('billing.invoice.create') && <button onClick={() => act('debit-note', 'Debit note draft created', { reason: window.prompt('Reason for the debit note?') || '' })}>Debit note</button>}
+        {kind === 'invoices' && d?.state === 'posted' && d.move_type === 'out_invoice' && can(`${cfg.p}.create`) && <button onClick={() => act('debit-note', 'Debit note draft created', { reason: window.prompt('Reason for the debit note?') || '' })}>Debit note</button>}
         {d && d.state !== 'cancelled' && can(`${cfg.p}.cancel`) && (d.state !== 'posted' || num(d.amount_residual) === num(d.amount_total)) && <button className="danger" onClick={() => { const r = window.prompt('Reason for cancelling (audit trail):'); if (r) act('cancel', 'Cancelled', { reason: r }) }}>Cancel</button>}
         {d?.state === 'posted' && num(d.amount_residual) > 0 && can('billing.payment.post') && <button onClick={() => setPay(true)}>Register payment</button>}
         {editable && can(`${cfg.p}.create`) && <button disabled={busy} onClick={save}>Save draft</button>}

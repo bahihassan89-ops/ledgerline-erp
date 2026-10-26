@@ -11,23 +11,35 @@ from apps.iam.permissions_catalog import CATALOG
 from .models import WEBHOOK_EVENTS, ApiKey, Webhook, WebhookDelivery
 
 
-def assert_public_url(url):
-    """SSRF guard: webhooks may only target public HTTPS hosts."""
+def resolve_validated_ip(url):
+    """SSRF guard: webhooks may only target public HTTPS hosts. Returns the validated IP (or None
+    when running in the DEBUG-only private-webhooks escape hatch) so the caller can connect
+    directly to that address instead of re-resolving DNS — a second lookup between validation and
+    connection is a DNS-rebinding TOCTOU window (the attacker's DNS answers public at check-time,
+    private at connect-time)."""
     u = urlparse(url)
     if u.scheme != "https" and not (settings.DEBUG and u.scheme == "http"):
         raise serializers.ValidationError("Webhook URLs must use HTTPS.")
     if not u.hostname:
         raise serializers.ValidationError("Invalid URL.")
     if settings.DEBUG and getattr(settings, "ERP_ALLOW_PRIVATE_WEBHOOKS", False):
-        return
+        return None
     try:
         infos = socket.getaddrinfo(u.hostname, u.port or 443)
     except socket.gaierror:
         raise serializers.ValidationError("Host does not resolve.")
+    validated_ip = None
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
         if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
             raise serializers.ValidationError("Webhook URL resolves to a private/internal address.")
+        validated_ip = validated_ip or info[4][0]
+    return validated_ip
+
+
+def assert_public_url(url):
+    """Validation-only form of resolve_validated_ip(), for serializer field checks."""
+    resolve_validated_ip(url)
 
 
 class ApiKeySerializer(CompanyScopedSerializer):

@@ -12,6 +12,7 @@ export default function Eta() {
   const [tab, setTab] = useState('docs')
   const [state, setState] = useState('')
   const docs = useFetch<any>('/eta-documents/', { state, page_size: 200 })
+  const docsError = docs.error
   const received = useFetch<any[]>(tab === 'received' ? '/eta-documents/received/' : null)
   const [view, setView] = useState<any>(null)
   const { run, busy } = useAction()
@@ -19,6 +20,7 @@ export default function Eta() {
     <>
       <PageHead title="E-Invoicing — منظومة الفاتورة الإلكترونية" sub="Customer invoices, credit and debit notes are signed and submitted to the Egyptian Tax Authority when posted."
         actions={can('einvoice.document.submit') && <button className="primary" disabled={busy} onClick={async () => { const r = await run(() => post('/eta-documents/submit-pending/')); if (r) { alert(`Submitted ${r.submitted}, refreshed ${r.refreshed}`); docs.reload() } }}>Submit pending & refresh</button>} />
+      {docsError && <div className="alert bad">{docsError}</div>}
       <Tabs tabs={[['docs', 'Submissions'], ['received', 'Received from vendors'], ...(can('einvoice.settings.manage') ? [['settings', 'Connection settings'] as [string, string]] : [])]} value={tab} onChange={setTab} />
       {tab === 'docs' && <div className="card">
         <div className="toolbar"><select value={state} onChange={(e) => setState(e.target.value)}><option value="">All states</option>{Object.keys(TONE).map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}</select></div>

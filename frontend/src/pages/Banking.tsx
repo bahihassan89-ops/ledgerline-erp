@@ -9,13 +9,14 @@ import { useFetch, useOptions } from '../lib/hooks'
 export default function Banking() {
   const { can } = useAuth()
   const [tab, setTab] = useState('statements')
-  const { data, reload } = useFetch<any>('/bank-statements/')
+  const { data, error, reload } = useFetch<any>('/bank-statements/')
   const [open, setOpen] = useState<any>(null)
   const [imp, setImp] = useState(false)
   return (
     <>
       <PageHead title="Bank Reconciliation — التسوية البنكية" sub="Import the bank statement, match each line to the books, post bank charges, and prove the balances agree."
         actions={can('banking.statement.manage') && <button className="primary" onClick={() => setImp(true)}>Import statement</button>} />
+      {error && <div className="alert bad">{error}</div>}
       <Tabs tabs={[['statements', 'Statements'], ['report', 'Reconciliation statement']]} value={tab} onChange={setTab} />
       {tab === 'statements' ? <div className="card"><DataTable rows={data?.results} onRow={setOpen} empty="No statements imported yet." cols={[
         { key: 'journal_code', title: 'Bank' }, { key: 'reference', title: 'Reference' },

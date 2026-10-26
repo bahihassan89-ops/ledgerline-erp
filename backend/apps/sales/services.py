@@ -34,12 +34,14 @@ def credit_exposure(company, partner):
         amt = round_to(inv.amount_residual * inv.rate, company.base_currency.decimals)
         open_inv += -amt if inv.move_type == InvoiceType.OUT_REFUND else amt
     uninvoiced = ZERO
-    for so in SalesOrder.objects.filter(company=company, partner=partner, state=OrderState.CONFIRMED):
+    orders = SalesOrder.objects.filter(company=company, partner=partner,
+                                       state=OrderState.CONFIRMED).prefetch_related("lines")
+    for so in orders:
+        rate = gl.resolve_rate(company, so.currency_id, so.date)
         for ln in so.lines.all():
             remaining = ln.quantity - ln.qty_invoiced
             if remaining > 0:
-                uninvoiced += gl.to_base(company, ln.total * remaining / ln.quantity,
-                                         gl.resolve_rate(company, so.currency_id, so.date))
+                uninvoiced += gl.to_base(company, ln.total * remaining / ln.quantity, rate)
     return open_inv + uninvoiced
 
 

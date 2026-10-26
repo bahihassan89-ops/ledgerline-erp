@@ -10,7 +10,7 @@ import { EntryById } from './JournalEntries'
 // ------------------------------------------------------------------ approvals
 export function Approvals() {
   const [tab, setTab] = useState('mine')
-  const { data, reload } = useFetch<any>('/approval-requests/', tab === 'mine' ? { mine: 1 } : tab === 'pending' ? { state: 'pending' } : {})
+  const { data, error, reload } = useFetch<any>('/approval-requests/', tab === 'mine' ? { mine: 1 } : tab === 'pending' ? { state: 'pending' } : {})
   const [cur, setCur] = useState<any>(null)
   const { run } = useAction()
   const decide = async (approve: boolean) => {
@@ -21,6 +21,7 @@ export function Approvals() {
   return (
     <>
       <PageHead title="Approvals" sub="Documents above an approval threshold. You cannot approve what you prepared, and only within your level and limit." />
+      {error && <div className="alert bad">{error}</div>}
       <Tabs tabs={[['mine', 'Waiting for me'], ['pending', 'All pending'], ['all', 'History']]} value={tab} onChange={setTab} />
       <div className="card"><DataTable rows={data?.results} onRow={setCur} empty="Nothing waiting." cols={[
         { key: 'created_at', title: 'Requested', render: (r) => fmtDate(r.created_at.slice(0, 10)) }, { key: 'document_type', title: 'Document', render: (r) => label(r.document_type) },
@@ -40,7 +41,7 @@ export function Approvals() {
 // ------------------------------------------------------------------ periods
 export function Periods() {
   const { can } = useAuth()
-  const { data, reload } = useFetch<any[]>('/fiscal-years/')
+  const { data, error, reload } = useFetch<any[]>('/fiscal-years/')
   const { run } = useAction()
   const [closing, setClosing] = useState<number | null>(null)
   const setState = async (p: any, state: string) => {
@@ -52,6 +53,7 @@ export function Periods() {
   return (
     <>
       <PageHead title="Fiscal Years & Periods" sub="Open → Closed (only privileged users may post) → Locked (nobody may post, permanent)." actions={can('ledger.period.manage') && <button className="primary" onClick={openYear}>+ Open fiscal year</button>} />
+      {error && <div className="alert bad">{error}</div>}
       <div className="stack">{data?.map((fy) => (
         <div className="card" key={fy.id}>
           <div className="card-head"><h2>Fiscal year {fy.name}</h2><span className="muted">{fmtDate(fy.start_date)} – {fmtDate(fy.end_date)}</span>{fy.closed && <span className="badge ok">Closed · {fy.closing_entry_number || 'no P&L'}</span>}<span style={{ flex: 1 }} />
@@ -259,13 +261,14 @@ export function Integrations() {
 export function Audit() {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
-  const { data } = useFetch<any>('/audit-log/', { search, page, page_size: 100 })
+  const { data, error } = useFetch<any>('/audit-log/', { search, page, page_size: 100 })
   const [verify, setVerify] = useState<any>(null)
   const [row, setRow] = useState<any>(null)
   return (
     <>
       <PageHead title="Audit Trail" sub="Append-only and hash-chained: every record includes the hash of the previous one, so any alteration is detectable."
         actions={<button onClick={async () => setVerify(await get('/audit-log/verify/'))}>Verify integrity</button>} />
+      {error && <div className="alert bad">{error}</div>}
       {verify && <div className={`alert ${verify.intact ? 'ok' : 'bad'}`} style={{ marginBottom: 12 }}>{verify.intact ? `✓ Chain intact — ${verify.entries} records verified.` : `✗ Chain broken at record #${verify.first_broken_id}. Investigate immediately.`}</div>}
       <div className="card">
         <div className="toolbar"><input placeholder="Search user, action, object…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1) }} /><span style={{ flex: 1 }} /><button disabled={!data?.previous} onClick={() => setPage(page - 1)}>←</button><span>Page {page}</span><button disabled={!data?.next} onClick={() => setPage(page + 1)}>→</button></div>

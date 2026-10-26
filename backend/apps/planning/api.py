@@ -42,9 +42,7 @@ class BudgetViewSet(CompanyViewSet):
 
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
-        b = self.get_object()
-        b.state = "approved"
-        b.save(update_fields=["state", "updated_at"])
+        b = services.approve_budget(self.get_object(), request.user)
         return Response(self.get_serializer(b).data)
 
     @action(detail=True)

@@ -191,6 +191,7 @@ def create_entry(company, journal, on_date, lines, *, user=None, reference="", n
         source_type=source[0] if source else "", source_id=source[1] if source else None,
     )
     _write_lines(entry, lines)
+    audit.record("create", entry, {"journal": journal.code, "lines": len(lines)})
     return entry
 
 
@@ -218,8 +219,10 @@ def _write_lines(entry, lines):
 def replace_lines(entry, lines):
     if entry.state != EntryState.DRAFT:
         raise BusinessError("Only draft entries can be edited.", "not_draft")
+    old_count = entry.lines.count()
     entry.lines.all().delete()
     _write_lines(entry, lines)
+    audit.record("update_lines", entry, {"lines": [old_count, len(lines)]})
 
 
 @transaction.atomic

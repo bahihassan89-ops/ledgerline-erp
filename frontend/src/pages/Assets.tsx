@@ -14,6 +14,7 @@ export default function Assets() {
   const [tab, setTab] = useState('register')
   const [asOf, setAsOf] = useState(today())
   const reg = useFetch<any>('/assets/register/', { as_of: asOf })
+  const regError = reg.error
   const all = useFetch<any>('/assets/', { page_size: 500 })
   const unreg = useFetch<any[]>('/assets/unregistered/')
   const [year, setYear] = useState(new Date().getFullYear())
@@ -29,6 +30,7 @@ export default function Assets() {
     <>
       <PageHead title="Fixed Assets — الأصول الثابتة" sub="Register, monthly depreciation (EAS 10), disposals, and tax depreciation under Income Tax Law 91/2005 art. 25."
         actions={<>{can('assets.depreciation.run') && <button onClick={runDep}>Run depreciation</button>}{can('assets.asset.manage') && <button className="primary" onClick={() => setEdit({})}>+ New asset</button>}</>} />
+      {regError && <div className="alert bad">{regError}</div>}
       {unreg.data && unreg.data.length > 0 && <div className="alert warn" style={{ marginBottom: 12 }}>{unreg.data.length} fixed-asset purchase(s) on vendor bills are not in the register yet — see the “Unregistered purchases” tab.</div>}
       <Tabs tabs={[['register', 'Register'], ['all', 'All assets'], ['unreg', 'Unregistered purchases'], ['tax', 'Tax depreciation']]} value={tab} onChange={setTab} />
       {tab === 'register' && <div className="card">

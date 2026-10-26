@@ -105,7 +105,7 @@ function MoEditor({ initial, onClose }: any) {
   return (
     <Modal wide onClose={onClose} title={<>{m.number || 'New manufacturing order'} {m.state && <span className={`badge ${TONE[m.state]}`}>{label(m.state)}</span>}</>}
       footer={can('manufacturing.order.manage') && <>{m.id && draft && <button className="danger" onClick={async () => { if (await run(() => del(`/manufacturing-orders/${m.id}/`)) !== undefined) onClose() }}>Delete</button>}
-        {open && !num(m.material_cost) && !num(m.labour_cost) && <button className="danger" onClick={() => act('cancel', {}, 'Cancelled')}>Cancel</button>}<span style={{ flex: 1 }} />
+        {open && !num(m.material_cost) && !num(m.labour_cost) && <button className="danger" onClick={() => { if (window.confirm('Cancel this manufacturing order?')) act('cancel', {}, 'Cancelled') }}>Cancel</button>}<span style={{ flex: 1 }} />
         {draft && <><button disabled={busy} onClick={save}>Save</button><button className="primary" disabled={busy} onClick={async () => { const s = await save(); if (s) { const r = await run(() => post(`/manufacturing-orders/${s.id}/confirm/`), 'Confirmed'); if (r) setM(r) } }}>Confirm</button></>}
         {open && <><button onClick={() => setDlg('consume')}>Issue components</button><button onClick={() => setDlg('ops')}>Record labour hours</button><button className="primary" onClick={() => setDlg('produce')}>Produce</button></>}</>}>
       <div className="grid form">

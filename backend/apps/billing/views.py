@@ -1,3 +1,5 @@
+from django.db.models import Case, DecimalField, F, Sum, Value, When
+from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import serializers
@@ -12,7 +14,7 @@ from apps.ledger.models import Journal
 from apps.ledger.views import parse_date
 
 from . import services
-from .models import Allocation, DocState, Invoice, InvoiceType, Payment
+from .models import Allocation, DocState, Invoice, InvoiceType, Payment, REFUND_TYPES
 from .serializers import InvoiceSerializer, PaymentSerializer
 
 
@@ -65,6 +67,18 @@ class _InvoiceBase(CompanyViewSet):
                                     notes=request.data.get("reason", ""))
         return Response(self.get_serializer(dn).data, status=201)
 
+    @action(detail=False, url_path="open-balance")
+    def open_balance(self, request):
+        """Sum of amount_residual (in base currency) across every posted document matching the
+        current filters — computed in the DB so it isn't capped by the list endpoint's page size."""
+        qs = self.filter_queryset(self.get_queryset()).filter(state=DocState.POSTED)
+        total = qs.aggregate(total=Coalesce(Sum(
+            Case(When(move_type__in=REFUND_TYPES, then=-F("amount_residual") * F("rate")),
+                 default=F("amount_residual") * F("rate"),
+                 output_field=DecimalField(max_digits=20, decimal_places=4)),
+        ), Value(D(0), output_field=DecimalField(max_digits=20, decimal_places=4))))["total"]
+        return Response({"total": str(total)})
+
     @action(detail=True, methods=["post"], url_path="register-payment")
     def register_payment(self, request, pk=None):
         """Create, post and allocate a payment for this document in one step."""
@@ -92,14 +106,15 @@ class CustomerInvoiceViewSet(_InvoiceBase):
     perms = {"list": "billing.invoice.view", "create": "billing.invoice.create", "update": "billing.invoice.create",
              "destroy": "billing.invoice.create", "post": "billing.invoice.post", "cancel": "billing.invoice.cancel",
              "refund": "billing.invoice.cancel", "register_payment": "billing.payment.post",
-             "debit_note": "billing.invoice.create"}
+             "debit_note": "billing.invoice.create", "open_balance": "billing.invoice.view"}
 
 
 class VendorBillViewSet(_InvoiceBase):
     types = (InvoiceType.IN_INVOICE, InvoiceType.IN_REFUND)
     perms = {"list": "billing.bill.view", "create": "billing.bill.create", "update": "billing.bill.create",
              "destroy": "billing.bill.create", "post": "billing.bill.post", "cancel": "billing.bill.cancel",
-             "refund": "billing.bill.cancel", "register_payment": "billing.payment.post"}
+             "refund": "billing.bill.cancel", "register_payment": "billing.payment.post",
+             "open_balance": "billing.bill.view"}
 
 
 class AllocateSerializer(serializers.Serializer):

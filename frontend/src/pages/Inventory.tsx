@@ -9,11 +9,12 @@ import { invalidateOptions, useFetch } from '../lib/hooks'
 export function Products() {
   const { can } = useAuth()
   const [search, setSearch] = useState('')
-  const { data, reload } = useFetch<any>('/products/', { search, page_size: 200 })
+  const { data, error, reload } = useFetch<any>('/products/', { search, page_size: 200 })
   const [edit, setEdit] = useState<any>(null)
   return (
     <>
       <PageHead title="Products" sub="Stockable products are tracked and valued (FIFO or weighted average, set on the category)." actions={can('inventory.product.manage') && <button className="primary" onClick={() => setEdit({})}>+ New product</button>} />
+      {error && <div className="alert bad">{error}</div>}
       <div className="card">
         <div className="toolbar"><input placeholder="Search SKU, name, barcode…" value={search} onChange={(e) => setSearch(e.target.value)} /></div>
         <DataTable rows={data?.results} onRow={setEdit} cols={[
@@ -66,6 +67,7 @@ export function Stock() {
   const { can } = useAuth()
   const [tab, setTab] = useState('levels')
   const levels = useFetch<any>('/stock-levels/', { page_size: 500 })
+  const levelsError = levels.error
   const moves = useFetch<any>('/stock-moves/', { page_size: 200 })
   const [op, setOp] = useState<string | null>(null)
   const reload = () => { levels.reload(); moves.reload() }
@@ -73,6 +75,7 @@ export function Stock() {
     <>
       <PageHead title="Stock & Moves" sub="Every movement posts to the general ledger at cost."
         actions={<>{can('inventory.stock.adjust') && <><button onClick={() => setOp('opening')}>Opening stock</button><button onClick={() => setOp('adjust')}>Count adjustment</button></>}{can('inventory.stock.move') && <button onClick={() => setOp('transfer')}>Transfer</button>}</>} />
+      {levelsError && <div className="alert bad">{levelsError}</div>}
       <Tabs tabs={[['levels', 'Stock on hand'], ['moves', 'Movements']]} value={tab} onChange={setTab} />
       <div className="card">
         {tab === 'levels' ? <DataTable rows={levels.data?.results} cols={[{ key: 'product_sku', title: 'SKU' }, { key: 'product_name', title: 'Product' }, { key: 'warehouse_code', title: 'Warehouse' }, { key: 'quantity', title: 'On hand', num: true, render: (r) => qty(r.quantity) }]} />
@@ -115,7 +118,7 @@ function StockOp({ op, onClose, onDone }: any) {
 
 export function LandedCosts() {
   const { can } = useAuth()
-  const { data, reload } = useFetch<any>('/landed-costs/')
+  const { data, error, reload } = useFetch<any>('/landed-costs/')
   const receipts = useFetch<any>('/stock-moves/', { move_type: 'receipt', page_size: 200 })
   const [edit, setEdit] = useState<any>(null)
   const { run, busy } = useAction()
@@ -129,6 +132,7 @@ export function LandedCosts() {
     <>
       <PageHead title="Landed Costs — تكاليف الاستيراد" sub="Customs duties, freight, clearance and insurance added to the cost of received goods. Book the service bills to 'Landed Costs Clearing' first."
         actions={can('inventory.landed_cost.manage') && <button className="primary" onClick={() => setEdit({ date: today(), description: '', amount: '', allocation: 'value', counter_account: null, moves: [] })}>+ New landed cost</button>} />
+      {error && <div className="alert bad">{error}</div>}
       <div className="card"><DataTable rows={data?.results} onRow={(r) => r.state === 'draft' && setEdit(r)} cols={[{ key: 'number', title: 'Number', render: (r) => r.number || 'Draft' }, { key: 'date', title: 'Date', render: (r) => fmtDate(r.date) },
         { key: 'description', title: 'Description' }, { key: 'amount', title: 'Amount', num: true, render: (r) => money(r.amount) }, { key: 'moves', title: 'Receipts', num: true, render: (r) => r.moves.length },
         { key: 'entry_number', title: 'Entry' }, { key: 'state', title: 'State', render: (r) => <span className={`badge ${r.state === 'posted' ? 'ok' : ''}`}>{r.state}</span> }]} /></div>

@@ -23,9 +23,17 @@ def env_list(name, default=""):
     return [v.strip() for v in env(name, default).split(",") if v.strip()]
 
 
-ERP_ENV = env("ERP_ENV", "dev")  # dev | test | prod
+ERP_ENV = env("ERP_ENV", "dev").strip().lower()  # dev | test | prod
+if ERP_ENV not in ("dev", "test", "prod"):
+    # Fail loudly rather than silently falling back to the insecure dev-key path below —
+    # a typo or stray whitespace here must never be mistaken for "not prod".
+    raise RuntimeError(f"ERP_ENV must be one of dev/test/prod, got {ERP_ENV!r}")
 DEBUG = env_bool("ERP_DEBUG", ERP_ENV == "dev")
 SECRET_KEY = env("ERP_SECRET_KEY", "dev-insecure-key-change-me-0123456789-abcdefghijklmnop" if ERP_ENV != "prod" else None)
+# Dedicated signing key for JWTs, separate from SECRET_KEY (which also signs sessions/CSRF/password-reset
+# tokens) so a leak of one doesn't let an attacker forge the other. Falls back to SECRET_KEY only when
+# ERP_JWT_SIGNING_KEY isn't set, so existing deployments keep working until they set a dedicated key.
+JWT_SIGNING_KEY = env("ERP_JWT_SIGNING_KEY", SECRET_KEY)
 # Separate key used to encrypt secrets at rest (MFA seeds, webhook secrets).
 FIELD_ENCRYPTION_KEY = env("ERP_FIELD_ENCRYPTION_KEY", "dev-field-key-change-me" if ERP_ENV != "prod" else None)
 # Reverse proxies in front of Django (docker-compose: Caddy → nginx = 2). 0 = trust only REMOTE_ADDR.
@@ -164,7 +172,7 @@ SIMPLE_JWT = {
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
     "UPDATE_LAST_LOGIN": True,
-    "SIGNING_KEY": SECRET_KEY,
+    "SIGNING_KEY": JWT_SIGNING_KEY,
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 

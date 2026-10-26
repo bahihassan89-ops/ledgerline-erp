@@ -160,7 +160,8 @@ def receive(company, product, warehouse, qty, unit_cost, on_date, user, *, count
     quant.quantity += qty
     quant.save()
     _post(company, move, _inventory_account(product), counter_account, user, partner)
-    audit.record("stock_in", move, {"product": product.sku, "qty": qty, "value": value})
+    audit.record("stock_in", move, {"product": product.sku, "qty": qty, "value": value,
+                                     "serials": [s.serial_number for s in serial_rows]})
     _emit(company, move)
     return move
 
@@ -228,7 +229,8 @@ def issue(company, product, warehouse, qty, on_date, user, *, counter_account,
         StockMoveSerial.objects.bulk_create([StockMoveSerial(move=move, serial=s) for s in serial_rows])
     _finalize_outbound_serials(serial_rows, move_type)
     _post(company, move, counter_account, _inventory_account(product), user, partner)
-    audit.record("stock_out", move, {"product": product.sku, "qty": qty, "value": value})
+    audit.record("stock_out", move, {"product": product.sku, "qty": qty, "value": value,
+                                      "serials": [s.serial_number for s in serial_rows]})
     _emit(company, move)
     return move
 

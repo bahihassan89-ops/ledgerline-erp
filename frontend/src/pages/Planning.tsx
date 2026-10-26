@@ -8,7 +8,7 @@ import { useFetch, useOptions } from '../lib/hooks'
 
 export function Budgets() {
   const { can } = useAuth()
-  const { data: budgets, reload } = useFetch<any[]>('/budgets/')
+  const { data: budgets, error, reload } = useFetch<any[]>('/budgets/')
   const { data: years } = useFetch<any[]>('/fiscal-years/')
   const [sel, setSel] = useState<number | null>(null)
   const [tab, setTab] = useState('report')
@@ -21,6 +21,7 @@ export function Budgets() {
   return (
     <>
       <PageHead title="Budgets — الموازنة التقديرية" sub="Monthly budget per account; compare with actual results at any time." actions={can('planning.budget.manage') && <button className="primary" onClick={create}>+ New budget</button>} />
+      {error && <div className="alert bad">{error}</div>}
       {!b ? <div className="empty">No budget yet.</div> : <>
         <div className="row" style={{ marginBottom: 12 }}><select style={{ width: 'auto' }} value={b.id} onChange={(e) => setSel(Number(e.target.value))}>{budgets!.map((x) => <option key={x.id} value={x.id}>{x.name} · {x.fiscal_year_name}</option>)}</select>
           <span className={`badge ${b.state === 'approved' ? 'ok' : ''}`}>{b.state}</span>
@@ -87,7 +88,7 @@ function BudgetGrid({ budget, years, readOnly }: any) {
 
 export function Recurring() {
   const { can } = useAuth()
-  const { data, reload } = useFetch<any[]>('/recurring-entries/')
+  const { data, error, reload } = useFetch<any[]>('/recurring-entries/')
   const [edit, setEdit] = useState<any>(null)
   const { run } = useAction()
   return (
@@ -95,6 +96,7 @@ export function Recurring() {
       <PageHead title="Recurring Entries — القيود المتكررة" sub="Rent, amortisation of prepayments, standing accruals. Generated automatically every day by the scheduler, or on demand."
         actions={can('planning.recurring.manage') && <><button onClick={async () => { const r = await run(() => post('/recurring-entries/run-due/', {})); if (r) { alert(r.created.length ? `Created: ${r.created.join(', ')}` : 'Nothing due.'); reload() } }}>Generate due now</button>
           <button className="primary" onClick={() => setEdit({ name: '', journal: null, narration: '', frequency: 'monthly', next_date: today(), end_date: null, auto_post: false, auto_reverse_days: null, active: true, lines: [{ account: null, debit: '', credit: '' }, { account: null, debit: '', credit: '' }] })}>+ New template</button></>} />
+      {error && <div className="alert bad">{error}</div>}
       <div className="card"><DataTable rows={data} onRow={setEdit} cols={[{ key: 'name', title: 'Name' }, { key: 'journal_code', title: 'Journal' }, { key: 'frequency', title: 'Frequency' },
         { key: 'next_date', title: 'Next', render: (r) => fmtDate(r.next_date) }, { key: 'end_date', title: 'Until', render: (r) => fmtDate(r.end_date) },
         { key: 'amount', title: 'Amount', num: true, render: (r) => money(r.lines.reduce((s: number, l: any) => s + num(l.debit), 0)) },

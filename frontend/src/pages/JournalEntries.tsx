@@ -13,13 +13,14 @@ export default function JournalEntries() {
   const [q, setQ] = useState('')
   const state = sp.get('state') || ''
   const [page, setPage] = useState(1)
-  const { data, reload } = useFetch<any>('/journal-entries/', { state, search: q, page, page_size: 50 })
+  const { data, error, reload } = useFetch<any>('/journal-entries/', { state, search: q, page, page_size: 50 })
   const [open, setOpen] = useState<any>(null)
   const { can, company } = useAuth()
   return (
     <>
       <PageHead title="Journal Entries" sub="Every posting in the general ledger. Posted entries are permanent; corrections are made by reversal."
         actions={can('ledger.entry.create') && <button className="primary" onClick={() => setOpen({})}>+ New journal entry</button>} />
+      {error && <div className="alert bad">{error}</div>}
       <div className="card">
         <div className="toolbar">
           <input placeholder="Search number, reference, narration…" value={q} onChange={(e) => { setQ(e.target.value); setPage(1) }} />

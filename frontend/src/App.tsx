@@ -29,7 +29,20 @@ function Routed() {
   if (!me) return <Login />
   if (!me.companies.length) return <div className="empty">Your account is not assigned to any company. Contact your administrator.</div>
   if (window.location.pathname.startsWith('/print/')) return <Routes><Route path="/print/:kind/:id" element={<Print />} /></Routes>
-  const home = can('ledger.report.view') ? <Dashboard /> : can('iam.user.view') ? <Navigate to="/users" /> : <Navigate to="/invoices" />
+  // Route the user to the first module they actually have access to, rather than assuming
+  // everyone can view invoices — e.g. an inventory- or sales-only role has neither.
+  const HOME_CANDIDATES: [string, string][] = [
+    ['ledger.report.view', '__dashboard__'], ['iam.user.view', '/users'],
+    ['sales.order.view', '/sales-orders'], ['billing.invoice.view', '/invoices'],
+    ['purchasing.order.view', '/purchase-orders'], ['billing.bill.view', '/bills'],
+    ['partners.partner.view', '/customers'], ['inventory.product.view', '/products'],
+    ['inventory.stock.view', '/stock'], ['ledger.account.view', '/accounts'],
+    ['assets.asset.view', '/assets'], ['manufacturing.order.view', '/manufacturing'],
+    ['banking.statement.view', '/banking'], ['einvoice.document.view', '/eta'],
+  ]
+  const homeTo = HOME_CANDIDATES.find(([perm]) => can(perm))?.[1]
+  const home = homeTo === '__dashboard__' ? <Dashboard /> : homeTo ? <Navigate to={homeTo} />
+    : <div className="empty">Your account has no module access yet. Contact your administrator.</div>
   return (
     <Layout>
       <Routes>

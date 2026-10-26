@@ -187,7 +187,17 @@ class MfaConfirmView(APIView):
         user, via_token = _setup_user(request)
         if not user:
             return Response({"error": "invalid_token", "detail": "Session expired. Log in again."}, status=401)
+        if user.is_locked():
+            return Response({"error": "locked", "detail": "Account temporarily locked after repeated failures. "
+                             "Try again later or contact an administrator."}, status=status.HTTP_423_LOCKED)
         if not _verify_totp(user, request.data.get("code")):
+            # Same brute-force protection as MfaVerifyView — otherwise MFA setup has no attempt limit.
+            user.failed_login_count += 1
+            if user.failed_login_count >= settings.ERP_MAX_FAILED_LOGINS:
+                user.locked_until = timezone.now() + timedelta(minutes=settings.ERP_LOCKOUT_MINUTES)
+                user.failed_login_count = 0
+            user.save(update_fields=["failed_login_count", "locked_until"])
+            audit.record("mfa_setup_failed", user)
             return Response({"error": "invalid_code", "detail": "Invalid authentication code."}, status=400)
         user.mfa_enabled = True
         user.save(update_fields=["mfa_enabled"])

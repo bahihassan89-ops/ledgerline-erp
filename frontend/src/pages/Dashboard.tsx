@@ -13,12 +13,13 @@ function Kpi({ label, value, foot, tone }: any) {
 
 export default function Dashboard() {
   const { company, me } = useAuth()
-  const { data: d } = useFetch<any>('/dashboard/')
+  const { data: d, error } = useFetch<any>('/dashboard/')
   const cur = d?.currency
   const max = Math.max(1, ...(d?.monthly || []).flatMap((m: any) => [num(m.income), num(m.expense)]))
   return (
     <>
       <PageHead title={`Good ${new Date().getHours() < 12 ? 'morning' : 'afternoon'}, ${me?.full_name.split(' ')[0]}`} sub={`${company?.name} · figures in ${cur ?? ''}`} />
+      {error && <div className="alert bad">{error}</div>}
       {!d ? <div className="empty">Loading…</div> : <div className="stack">
         <div className="grid kpi">
           <Kpi label="Cash & bank" value={money(d.cash)} />

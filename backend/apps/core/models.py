@@ -191,7 +191,8 @@ class AuditLog(models.Model):
         return json.dumps({
             "at": self.at.isoformat(), "company": self.company_id, "user": self.user_id,
             "actor": self.actor_label, "action": self.action, "type": self.object_type,
-            "oid": self.object_id, "changes": self.changes, "ip": self.ip,
+            "oid": self.object_id, "repr": self.object_repr, "changes": self.changes, "ip": self.ip,
+            "ua": self.user_agent, "request_id": self.request_id,
         }, sort_keys=True, default=str)
 
     def compute_hash(self) -> str:

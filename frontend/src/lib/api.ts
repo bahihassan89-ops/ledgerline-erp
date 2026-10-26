@@ -116,7 +116,10 @@ export async function upload<T = any>(path: string, form: FormData): Promise<T> 
 
 /** Authenticated file download (the server never exposes files publicly). */
 export async function downloadAuthed(path: string, filename: string) {
-  const r = await fetch(`/api${path}`, { headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...(session.company() ? { 'X-Company': session.company()! } : {}) } })
+  const doFetch = () => fetch(`/api${path}`, { headers: { ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...(session.company() ? { 'X-Company': session.company()! } : {}) } })
+  let r = await doFetch()
+  if (r.status === 401 && session.hasRefresh() && await refresh()) r = await doFetch()
+  if (r.status === 401) onUnauthorized()
   if (!r.ok) throw new ApiError(r.status, null)
   const a = document.createElement('a')
   a.href = URL.createObjectURL(await r.blob())

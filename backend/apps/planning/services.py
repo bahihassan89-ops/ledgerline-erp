@@ -38,7 +38,21 @@ def set_budget_lines(budget, rows):
             objs.append(BudgetLine(budget=budget, account=acc, cost_center=cc, period_id=int(r["period"]),
                                    amount=D(r["amount"])))
     BudgetLine.objects.bulk_create(objs)
+    audit.record("set_lines", budget, {"lines": len(objs)})
     return len(objs)
+
+
+@transaction.atomic
+def approve_budget(budget, user):
+    budget = Budget.objects.select_for_update().get(pk=budget.pk)
+    if budget.state != "draft":
+        raise BusinessError("Only draft budgets can be approved.", "not_draft")
+    if not budget.lines.exists():
+        raise BusinessError("Add budget lines before approving.", "no_lines")
+    budget.state = "approved"
+    budget.save(update_fields=["state", "updated_at"])
+    audit.record("approve", budget, {"lines": budget.lines.count()}, repr_=budget.name)
+    return budget
 
 
 def budget_vs_actual(budget, date_from, date_to, cost_center=None):
