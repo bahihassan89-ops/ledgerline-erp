@@ -6,10 +6,11 @@ from rest_framework.routers import DefaultRouter
 
 from apps.approvals.views import ApprovalRequestViewSet, ApprovalRuleViewSet
 from apps.billing.views import CustomerInvoiceViewSet, PaymentViewSet, VendorBillViewSet
-from apps.core.views import (AuditLogViewSet, BranchViewSet, CompanyViewSetCurrent, CostCenterViewSet,
-                             CurrencyViewSet, ExchangeRateViewSet)
+from apps.core.views import (AuditLogViewSet, BranchViewSet, CompanyApprovalViewSet, CompanyProvisioningViewSet,
+                             CompanyViewSetCurrent, CostCenterViewSet, CurrencyViewSet, ExchangeRateViewSet)
 from apps.iam import auth_views
-from apps.iam.views import PermissionCatalogView, RoleViewSet, UserViewSet
+from apps.iam.views import (GlobalPermissionCatalogView, GlobalRoleViewSet, HeartbeatView, PermissionCatalogView,
+                            RoleViewSet, TeamActivityViewSet, UserViewSet)
 from apps.integrations.views import ApiKeyViewSet, WebhookDeliveryViewSet, WebhookViewSet
 from apps.inventory.views import (LotViewSet, ProductCategoryViewSet, ProductViewSet, SerialNumberViewSet,
                                   StockMoveViewSet, StockQuantViewSet, WarehouseViewSet)
@@ -75,6 +76,10 @@ r.register("manufacturing-orders", ManufacturingOrderViewSet)
 r.register("serial-numbers", SerialNumberViewSet)
 r.register("budgets", BudgetViewSet)
 r.register("recurring-entries", RecurringViewSet)
+r.register("global-roles", GlobalRoleViewSet)
+r.register("company-provisioning", CompanyProvisioningViewSet, basename="company-provisioning")
+r.register("company-approvals", CompanyApprovalViewSet, basename="company-approval")
+r.register("team-activity", TeamActivityViewSet, basename="team-activity")
 
 auth = [
     path("login/", auth_views.LoginView.as_view()),
@@ -92,6 +97,8 @@ urlpatterns = [
     path("api/dashboard/", DashboardView.as_view()),
     path("api/accounting-settings/", AccountingSettingsView.as_view()),
     path("api/permissions/", PermissionCatalogView.as_view()),
+    path("api/global-permissions/", GlobalPermissionCatalogView.as_view()),
+    path("api/presence/heartbeat/", HeartbeatView.as_view()),
     path("api/reports/<slug:name>/", ReportView.as_view()),
     path("api/eta-settings/", EtaSettingsView.as_view()),
     path("api/close-checklist/", ChecklistView.as_view()),

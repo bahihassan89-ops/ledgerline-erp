@@ -1,10 +1,23 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { post } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { Field, Modal, useAction } from './ui'
 
-type Item = { to: string; label: string; ico: string; perm: string | string[] }
+type Item = { to: string; label: string; ico: string; perm?: string | string[]; globalPerm?: string | string[] }
+
+// Rough mapping from route to a MODULE_REGISTRY code, used only to label presence/activity
+// tracking (see HeartbeatView) -- it doesn't need to be exhaustive, just informative.
+const MODULE_BY_PATH: Record<string, string> = {
+  '/': 'ledger', '/accounts': 'ledger', '/journal-entries': 'ledger', '/periods': 'ledger', '/reports': 'ledger',
+  '/close': 'ledger', '/revaluation': 'ledger', '/imports': 'ledger', '/settings': 'ledger',
+  '/sales-orders': 'sales', '/invoices': 'billing', '/receipts': 'billing', '/customers': 'partners',
+  '/purchase-orders': 'purchasing', '/bills': 'billing', '/vendor-payments': 'billing', '/vendors': 'partners',
+  '/products': 'inventory', '/stock': 'inventory', '/landed-costs': 'inventory',
+  '/users': 'iam', '/integrations': 'integrations', '/audit': 'core', '/assets': 'assets', '/banking': 'banking',
+  '/cheques': 'billing', '/eta': 'einvoice', '/manufacturing': 'manufacturing', '/budgets': 'planning',
+  '/recurring': 'planning', '/company-provisioning': 'core', '/company-approvals': 'core', '/team-activity': 'iam',
+}
 const NAV: [string, Item[]][] = [
   ['Overview', [
     { to: '/', label: 'Dashboard', ico: '◧', perm: 'ledger.report.view' },
@@ -57,13 +70,29 @@ const NAV: [string, Item[]][] = [
     { to: '/integrations', label: 'Integrations', ico: '⌁', perm: ['integrations.apikey.manage', 'integrations.webhook.manage'] },
     { to: '/audit', label: 'Audit Trail', ico: '⌕', perm: 'audit.log.view' },
   ]],
+  ['Central / Admin', [
+    { to: '/company-provisioning', label: 'Company Provisioning', ico: '⬒', globalPerm: 'company.create' },
+    { to: '/company-approvals', label: 'Company Approvals', ico: '⎆', globalPerm: 'company.activate' },
+    { to: '/team-activity', label: 'Team Activity', ico: '◉', globalPerm: 'presence.view_team' },
+  ]],
 ]
 
 export default function Layout({ children }: { children: ReactNode }) {
-  const { me, company, can, logout, switchCompany } = useAuth()
+  const { me, company, can, canGlobal, logout, switchCompany } = useAuth()
   const [pwd, setPwd] = useState(false)
   const loc = useLocation()
   const current = NAV.flatMap(([, i]) => i).find((i) => i.to === loc.pathname || (i.to !== '/' && loc.pathname.startsWith(i.to)))
+
+  // Reports presence (who's online, in which company, doing what) every ~30s while a tab is
+  // open, and immediately on navigation so a module/section switch shows up without delay.
+  useEffect(() => {
+    if (!me) return
+    const tick = () => { post('/presence/heartbeat/', { module_code: MODULE_BY_PATH[loc.pathname] || '', section: current?.label || '' }).catch(() => {}) }
+    tick()
+    const id = window.setInterval(tick, 30_000)
+    return () => window.clearInterval(id)
+  }, [me, loc.pathname, current?.label])
+
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -77,7 +106,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         )}
         <nav className="nav">
           {NAV.map(([group, items]) => {
-            const visible = items.filter((i) => can(i.perm))
+            const visible = items.filter((i) => (i.perm ? can(i.perm) : true) && (i.globalPerm ? canGlobal(i.globalPerm) : true))
             if (!visible.length) return null
             return <div key={group}><div className="nav-group">{group}</div>
               {visible.map((i) => <NavLink key={i.to} to={i.to} end={i.to === '/'}><span className="ico">{i.ico}</span>{i.label}</NavLink>)}

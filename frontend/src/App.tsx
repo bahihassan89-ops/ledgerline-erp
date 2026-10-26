@@ -22,6 +22,8 @@ import { Cheques } from './pages/Payments'
 import { CloseChecklist, Imports, Revaluation } from './pages/PeriodEnd'
 import { Budgets, Recurring } from './pages/Planning'
 import Print from './pages/Print'
+import { CompanyApprovals, CompanyProvisioning } from './pages/Company'
+import TeamActivity from './pages/TeamActivity'
 
 function Routed() {
   const { me, loading, can } = useAuth()
@@ -77,6 +79,9 @@ function Routed() {
         <Route path="/close" element={<CloseChecklist />} />
         <Route path="/revaluation" element={<Revaluation />} />
         <Route path="/imports" element={<Imports />} />
+        <Route path="/company-provisioning" element={<CompanyProvisioning />} />
+        <Route path="/company-approvals" element={<CompanyApprovals />} />
+        <Route path="/team-activity" element={<TeamActivity />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Layout>

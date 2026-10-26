@@ -133,3 +133,27 @@ DEFAULT_ROLES = [
     ("Auditor (read-only)", 0, AUDITOR, "0"),
     ("System Administrator", 0, ADMIN, "0"),
 ]
+
+# Company-independent permissions: cross-company/central authority that doesn't belong to any
+# single company's Role/Membership (CEO, central Controller, central Accounting Manager).
+GLOBAL_CATALOG = {
+    "company.create": "Start a new company (draft) for provisioning",
+    "company.submit": "Submit a draft company for CEO approval",
+    "company.activate": "Give final CEO approval to activate a pending company",
+    "company.reject": "Reject a company pending approval",
+    "company.module.manage": "Enable/disable modules on a company",
+    "membership.grant_any_company": "Grant/edit team membership and roles in any company",
+    "presence.view_team": "View the team activity / presence portal",
+}
+
+GLOBAL_CONTROLLER = ["company.create", "company.submit", "company.module.manage",
+                      "membership.grant_any_company", "presence.view_team"]
+GLOBAL_ACCOUNTING_MANAGER = ["membership.grant_any_company", "presence.view_team"]
+GLOBAL_CEO = list(GLOBAL_CATALOG)
+
+# name, level, permissions
+GLOBAL_DEFAULT_ROLES = [
+    ("Central Financial Controller", 4, GLOBAL_CONTROLLER),
+    ("Central Accounting Manager", 3, GLOBAL_ACCOUNTING_MANAGER),
+    ("CEO", 5, GLOBAL_CEO),
+]

@@ -43,6 +43,21 @@ class Currency(models.Model):
         return round_to(value, self.decimals)
 
 
+class CompanyType(models.TextChoices):
+    MANUFACTURING = "manufacturing", "Manufacturing"
+    TRADING = "trading", "Trading"
+    SERVICES = "services", "Services"
+    AGRICULTURE = "agriculture", "Agriculture"
+    OTHER = "other", "Other"
+
+
+class CompanyState(models.TextChoices):
+    DRAFT = "draft", "Draft"
+    PENDING_APPROVAL = "pending_approval", "Waiting CEO approval"
+    ACTIVE = "active", "Active"
+    REJECTED = "rejected", "Rejected"
+
+
 class Company(TimeStamped):
     name = models.CharField(max_length=200)
     name_ar = models.CharField(max_length=200, blank=True)
@@ -59,7 +74,20 @@ class Company(TimeStamped):
     lock_date = models.DateField(null=True, blank=True)
     # Price tolerance for 3-way match (percent above PO price allowed on a bill).
     bill_price_tolerance_pct = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal("0"))
+    # `active` gates every access path (resolve_company, User.membership) -- a draft or
+    # pending-approval company is already unusable the moment it's created, with no change
+    # needed to access resolution: only state=ACTIVE ever flips it True (see services.py).
     active = models.BooleanField(default=True)
+    company_type = models.CharField(max_length=20, choices=CompanyType.choices, default=CompanyType.OTHER)
+    state = models.CharField(max_length=20, choices=CompanyState.choices, default=CompanyState.ACTIVE,
+                             help_text="Companies created before this workflow existed default to active.")
+    submitted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT,
+                                     related_name="+")
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.PROTECT,
+                                    related_name="+")
+    approved_at = models.DateTimeField(null=True, blank=True)
+    rejected_reason = models.CharField(max_length=255, blank=True)
 
     class Meta:
         verbose_name_plural = "companies"
@@ -74,6 +102,20 @@ class CompanyScoped(TimeStamped):
 
     class Meta:
         abstract = True
+
+
+class CompanyModule(CompanyScoped):
+    """Which optional modules (manufacturing, assets, einvoice, ...) are enabled for a company.
+    Checked by ErpPermission when a ViewSet declares `module_code` -- lets a trading company
+    provisioned without Manufacturing simply not see those endpoints."""
+    module_code = models.CharField(max_length=40)
+    enabled = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = [("company", "module_code")]
+
+    def __str__(self):
+        return f"{self.company} / {self.module_code}"
 
 
 class ExchangeRate(CompanyScoped):

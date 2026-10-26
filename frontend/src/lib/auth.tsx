@@ -5,11 +5,12 @@ export type Company = {
   id: number; name: string; code: string; base_currency: string; level: number
   approval_limit: string | null; permissions: string[]; roles: { id: number; name: string; level: number }[]
 }
-export type Me = { id: number; username: string; email: string; full_name: string; mfa_enabled: boolean; is_superuser: boolean; must_change_password: boolean; trial?: boolean; companies: Company[] }
+export type Me = { id: number; username: string; email: string; full_name: string; mfa_enabled: boolean; is_superuser: boolean; must_change_password: boolean; trial?: boolean; companies: Company[]; global_permissions: string[] }
 
 type Ctx = {
   me: Me | null; company: Company | null; loading: boolean
   can: (perm: string | string[]) => boolean
+  canGlobal: (perm: string | string[]) => boolean
   reload: () => Promise<void>; logout: () => Promise<void>; switchCompany: (id: number) => void
   finishLogin: (tokens: { access: string; refresh: string }) => Promise<void>
 }
@@ -60,9 +61,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const ps = Array.isArray(perm) ? perm : [perm]
     return ps.some((p) => company.permissions.includes(p))
   }
+  const canGlobal = (perm: string | string[]) => {
+    if (!me) return false
+    if (me.is_superuser) return true
+    const ps = Array.isArray(perm) ? perm : [perm]
+    return ps.some((p) => me.global_permissions.includes(p))
+  }
   const finishLogin = async (t: { access: string; refresh: string }) => { session.setTokens(t.access, t.refresh); await reload() }
   const switchCompany = (id: number) => { session.setCompany(id); setCompanyId(id); window.location.assign('/') }
-  return <AuthCtx.Provider value={{ me, company, loading, can, reload, logout, switchCompany, finishLogin }}>{children}</AuthCtx.Provider>
+  return <AuthCtx.Provider value={{ me, company, loading, can, canGlobal, reload, logout, switchCompany, finishLogin }}>{children}</AuthCtx.Provider>
 }
 
 export const useAuth = () => useContext(AuthCtx)

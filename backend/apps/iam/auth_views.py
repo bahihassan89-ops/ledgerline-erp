@@ -234,8 +234,10 @@ class LogoutView(APIView):
             RefreshToken(request.data.get("refresh", "")).blacklist()
         except TokenError:
             pass
+        from . import presence
         _ctx_user(request.user)
         audit.record("logout", request.user)
+        presence.end_session(request.user)
         return Response(status=204)
 
 
@@ -282,4 +284,5 @@ class MeView(APIView):
         return Response({"id": u.pk, "username": u.username, "email": u.email,
                          "full_name": u.get_full_name() or u.username, "mfa_enabled": u.mfa_enabled,
                          "is_superuser": u.is_superuser, "must_change_password": u.must_change_password,
-                         "trial": settings.ERP_TRIAL, "companies": companies})
+                         "trial": settings.ERP_TRIAL, "companies": companies,
+                         "global_permissions": sorted(u.global_permissions())})

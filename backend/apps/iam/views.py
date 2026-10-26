@@ -1,5 +1,6 @@
-from rest_framework import viewsets
+from rest_framework import exceptions, mixins, viewsets
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -7,10 +8,12 @@ from apps.core import audit
 from apps.core.api import CompanyViewSet
 from apps.core.exceptions import BusinessError
 
-from .access import ErpPermission, resolve_company
-from .models import Role, User
-from .permissions_catalog import CATALOG
-from .serializers import RoleSerializer, UserSerializer
+from . import presence
+from .access import ErpPermission, GlobalPermission, resolve_company
+from .models import GlobalRole, PresenceEvent, Role, User, UserPresence
+from .permissions_catalog import CATALOG, GLOBAL_CATALOG
+from .serializers import (GlobalRoleSerializer, PresenceEventSerializer, RoleSerializer, UserPresenceSerializer,
+                          UserSerializer)
 
 
 class RoleViewSet(CompanyViewSet):
@@ -82,3 +85,55 @@ class PermissionCatalogView(APIView):
 
     def get(self, request):
         return Response([{"code": k, "description": v, "module": k.split(".")[0]} for k, v in CATALOG.items()])
+
+
+class GlobalPermissionCatalogView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response([{"code": k, "description": v} for k, v in GLOBAL_CATALOG.items()])
+
+
+class GlobalRoleViewSet(viewsets.ModelViewSet):
+    """Defines the global role *bundles* (CEO, Central Controller, Central Accounting Manager).
+    Mutating these is CEO-only (company.activate): anyone holding membership.grant_any_company
+    could otherwise edit the CEO bundle's own permissions and escalate to it."""
+    queryset = GlobalRole.objects.all()
+    serializer_class = GlobalRoleSerializer
+    permission_classes = [GlobalPermission]
+    global_perms = {"list": "membership.grant_any_company", "retrieve": "membership.grant_any_company",
+                    "*": "company.activate"}
+    pagination_class = None
+
+
+class HeartbeatView(APIView):
+    """Called every ~30s by the frontend while a tab is open. Updates the live 'who's online'
+    cache and, on a meaningful change, appends to the permanent PresenceEvent log."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            company = resolve_company(request)
+        except exceptions.PermissionDenied:
+            company = None
+        pres = presence.heartbeat(request.user, company, request.data.get("module_code", ""),
+                                  request.data.get("section", ""))
+        return Response(UserPresenceSerializer(pres).data)
+
+
+class TeamActivityViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    """Central 'who's online, where, doing what' view for the Controller/Accounting Manager/CEO
+    team-activity portal."""
+    queryset = UserPresence.objects.select_related("user", "company").order_by("user__username")
+    serializer_class = UserPresenceSerializer
+    permission_classes = [GlobalPermission]
+    global_perms = {"list": "presence.view_team", "retrieve": "presence.view_team",
+                    "history": "presence.view_team"}
+    lookup_field = "user_id"
+    pagination_class = None
+
+    @action(detail=True, methods=["get"])
+    def history(self, request, user_id=None):
+        """The permanent, append-only historical log for one user (see PresenceEvent)."""
+        events = PresenceEvent.objects.filter(user_id=user_id).select_related("company")[:500]
+        return Response(PresenceEventSerializer(events, many=True).data)
