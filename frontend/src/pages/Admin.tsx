@@ -163,16 +163,21 @@ function SimpleCrud({ path, title, fields }: { path: string; title: string; fiel
 
 // ------------------------------------------------------------------ users & roles
 export function Users() {
-  const { can, me } = useAuth()
+  const { can, canGlobal, me } = useAuth()
   const [tab, setTab] = useState('users')
   const users = useFetch<any>('/users/', { page_size: 500 })
   const roles = useFetch<any[]>('/roles/')
   const perms = useFetch<any[]>('/permissions/')
+  // Global (cross-company) roles -- CEO / Central Controller / Central Accounting Manager. Only
+  // fetched for someone who can actually grant them, matching the backend's own restriction
+  // (UserSerializer.validate_global_role_ids: CEO-only, strictly more sensitive than a company role).
+  const globalRoles = useFetch<any[]>(canGlobal('company.activate') ? '/global-roles/' : null)
   const [u, setU] = useState<any>(null)
   const [r, setR] = useState<any>(null)
   const { run, busy } = useAction()
   const saveUser = async () => {
-    const { id, roles: _r, locked, mfa_enabled, last_login, ...b } = u; void _r; void locked; void mfa_enabled; void last_login
+    const { id, roles: _r, global_roles: _gr, locked, mfa_enabled, last_login, ...b } = u
+    void _r; void _gr; void locked; void mfa_enabled; void last_login
     if (!b.password) delete b.password
     if (await run(() => (id ? patch(`/users/${id}/`, b) : post('/users/', b)), 'User saved')) { setU(null); users.reload() }
   }
@@ -182,11 +187,11 @@ export function Users() {
   return (
     <>
       <PageHead title="Users & Roles" sub="Roles carry a managerial level (0–5), an approval limit and fine-grained permissions. You can only grant rights you hold yourself."
-        actions={can('iam.user.manage') && (tab === 'users' ? <button className="primary" onClick={() => setU({ username: '', email: '', first_name: '', last_name: '', is_active: true, role_ids: [], password: '' })}>+ New user</button> : can('iam.role.manage') && <button className="primary" onClick={() => setR({ name: '', level: 1, permissions: [], approval_limit: '0', active: true })}>+ New role</button>)} />
+        actions={can('iam.user.manage') && (tab === 'users' ? <button className="primary" onClick={() => setU({ username: '', email: '', first_name: '', last_name: '', is_active: true, role_ids: [], global_role_ids: [], password: '' })}>+ New user</button> : can('iam.role.manage') && <button className="primary" onClick={() => setR({ name: '', level: 1, permissions: [], approval_limit: '0', active: true })}>+ New role</button>)} />
       <Tabs tabs={[['users', 'Users'], ['roles', 'Roles & permissions']]} value={tab} onChange={setTab} />
-      {tab === 'users' ? <div className="card"><DataTable rows={users.data?.results} onRow={(x) => can('iam.user.manage') && setU({ ...x, role_ids: x.roles.map((y: any) => y.id), password: '' })} cols={[
+      {tab === 'users' ? <div className="card"><DataTable rows={users.data?.results} onRow={(x) => can('iam.user.manage') && setU({ ...x, role_ids: x.roles.map((y: any) => y.id), global_role_ids: x.global_roles.map((y: any) => y.id), password: '' })} cols={[
         { key: 'username', title: 'Username' }, { key: 'name', title: 'Name', render: (x) => `${x.first_name} ${x.last_name}` }, { key: 'email', title: 'Email' },
-        { key: 'roles', title: 'Roles', render: (x) => x.roles.map((y: any) => <span key={y.id} className="badge" style={{ marginRight: 4 }}>{y.name}</span>) },
+        { key: 'roles', title: 'Roles', render: (x) => <>{x.roles.map((y: any) => <span key={y.id} className="badge" style={{ marginRight: 4 }}>{y.name}</span>)}{x.global_roles.map((y: any) => <span key={`g${y.id}`} className="badge warn" style={{ marginRight: 4 }} title="Global (cross-company) role">{y.name}</span>)}</> },
         { key: 'mfa', title: 'MFA', render: (x) => x.mfa_enabled ? <span className="badge ok">On</span> : <span className="badge">Off</span> },
         { key: 'st', title: 'Status', render: (x) => <>{!x.is_active && <span className="badge bad">Disabled</span>} {x.locked && <span className="badge bad">Locked</span>}</> },
         { key: 'last_login', title: 'Last login', render: (x) => x.last_login ? new Date(x.last_login).toLocaleString() : '—' },
@@ -197,6 +202,9 @@ export function Users() {
         <div className="grid form">{[['username', 'Username'], ['email', 'Email'], ['first_name', 'First name'], ['last_name', 'Last name']].map(([k, l]) => <Field key={k} label={l}><input value={u[k]} onChange={(e) => setU({ ...u, [k]: e.target.value })} disabled={k === 'username' && !!u.id} /></Field>)}</div>
         <Field label={u.id ? 'Reset password (leave empty to keep)' : 'Initial password'} hint="User must change it at first login."><input type="password" autoComplete="new-password" value={u.password} onChange={(e) => setU({ ...u, password: e.target.value })} /></Field>
         <Field label="Roles in this company">{roles.data?.map((x) => <label key={x.id} className="check"><input type="checkbox" checked={u.role_ids.includes(x.id)} onChange={(e) => setU({ ...u, role_ids: e.target.checked ? [...u.role_ids, x.id] : u.role_ids.filter((i: number) => i !== x.id) })} />{x.name} <span className="muted">L{x.level}</span></label>)}</Field>
+        {canGlobal('company.activate') && <Field label="Global roles (cross-company authority)" hint="CEO-only. Spans every company -- e.g. final approval to activate a new company, or viewing the team-activity portal across all companies.">
+          {globalRoles.data?.map((x) => <label key={x.id} className="check"><input type="checkbox" checked={u.global_role_ids.includes(x.id)} onChange={(e) => setU({ ...u, global_role_ids: e.target.checked ? [...u.global_role_ids, x.id] : u.global_role_ids.filter((i: number) => i !== x.id) })} />{x.name} <span className="muted">L{x.level}</span></label>)}
+        </Field>}
         <label className="check"><input type="checkbox" checked={u.is_active} onChange={(e) => setU({ ...u, is_active: e.target.checked })} />Active</label>
       </Modal>}
       {r && <Modal wide title={r.id ? r.name : 'New role'} onClose={() => setR(null)} footer={<><button onClick={() => setR(null)}>Cancel</button><button className="primary" disabled={busy} onClick={saveRole}>Save</button></>}>
