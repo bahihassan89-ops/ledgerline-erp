@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { DataTable, Modal, PageHead } from '../components/ui'
 import { get } from '../lib/api'
 import { label } from '../lib/format'
@@ -25,6 +25,14 @@ export default function TeamActivity() {
   const { data, error, reload } = useFetch<any[]>('/team-activity/')
   const rows = data || []
   const [hist, setHist] = useState<{ user: any; events: any[] | null } | null>(null)
+  // "Longest idle" needs the current time, but reading the clock inside useMemo would make it an
+  // impure computation (same inputs could yield different outputs). Instead the clock lives in
+  // state, ticking once a minute, which both satisfies that and keeps the KPI advancing live.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 60_000)
+    return () => window.clearInterval(id)
+  }, [])
 
   const kpis = useMemo(() => {
     const online = rows.filter((r) => r.status === 'online')
@@ -32,11 +40,11 @@ export default function TeamActivity() {
     const companies = new Set(signedIn.filter((r) => r.company).map((r) => r.company))
     const avgActive = rows.length ? rows.reduce((s, r) => s + Number(r.active_today_minutes || 0), 0) / rows.length : 0
     const longestIdle = signedIn.reduce((max, r) => {
-      const idleMin = (Date.now() - new Date(r.last_heartbeat).getTime()) / 60000
+      const idleMin = (now - new Date(r.last_heartbeat).getTime()) / 60000
       return Math.max(max, idleMin)
     }, 0)
     return { online: online.length, companies: companies.size, avgActive, longestIdle }
-  }, [rows])
+  }, [rows, now])
 
   const openHistory = (r: any) => {
     setHist({ user: r, events: null })
