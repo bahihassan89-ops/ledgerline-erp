@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { post } from '../lib/api'
 import { useAuth } from '../lib/auth'
+import NotificationBell from './Notifications'
 import { Field, Modal, useAction } from './ui'
 
 type Item = { to: string; label: string; ico: string; perm?: string | string[]; globalPerm?: string | string[] }
@@ -129,6 +130,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           <div className="spacer" />
           <span className="badge">{company?.base_currency}</span>
           {me && !me.mfa_enabled && <span className="badge warn" title="Enable MFA from your administrator">MFA off</span>}
+          {me && <NotificationBell />}
         </header>
         {me?.trial && <div className="trial-banner">TRIAL SYSTEM · demo data only. Do not enter real customer, employee or financial data. نسخة تجريبية: لا تُدخل بيانات حقيقية</div>}
         <main className="content">{children}</main>

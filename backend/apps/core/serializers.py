@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
-from .models import AuditLog, Branch, Company, CompanyModule, CompanyType, CostCenter, Currency, ExchangeRate
+from .models import (AuditLog, Branch, Company, CompanyModule, CompanyType, CostCenter, Currency, ExchangeRate,
+                     Notification, PushSubscription)
 from .modules import MODULE_REGISTRY
 from .serializers_base import CompanyScopedSerializer
 
@@ -93,3 +94,16 @@ class AuditLogSerializer(serializers.ModelSerializer):
         model = AuditLog
         fields = ["id", "at", "user", "actor_label", "action", "object_type", "object_id", "object_repr",
                   "changes", "ip", "request_id", "hash"]
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = ["id", "company", "category", "title", "body", "url", "read_at", "created_at"]
+        read_only_fields = fields
+
+
+class PushSubscriptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PushSubscription
+        fields = ["id", "endpoint", "p256dh", "auth"]

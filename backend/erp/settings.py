@@ -199,6 +199,15 @@ ERP_TRIAL = env_bool("ERP_TRIAL", False)
 ERP_MFA_REQUIRED_LEVEL = int(env("ERP_MFA_REQUIRED_LEVEL", "1"))
 ERP_PASSWORD_MAX_AGE_DAYS = int(env("ERP_PASSWORD_MAX_AGE_DAYS", "90"))
 
+# --- Web push (phone/browser notifications) --------------------------------
+# Generate a keypair with `vapid --gen` (py-vapid) or `python -m apps.core.push_keygen` and set
+# both ends: the public key ships to the frontend, the private key never leaves the server.
+# Empty by default -- push delivery is silently skipped (notify.send() still creates the
+# in-app Notification) until these are configured.
+WEBPUSH_PUBLIC_KEY = env("ERP_WEBPUSH_PUBLIC_KEY", "")
+WEBPUSH_PRIVATE_KEY = env("ERP_WEBPUSH_PRIVATE_KEY", "")
+WEBPUSH_CONTACT_EMAIL = env("ERP_WEBPUSH_CONTACT_EMAIL", "admin@example.com")
+
 # --- CORS / CSRF / transport ---------------------------------------------
 CORS_ALLOWED_ORIGINS = env_list("ERP_CORS_ORIGINS", "http://localhost:5173")
 CORS_ALLOW_HEADERS = ["authorization", "content-type", "x-company", "x-request-id", "idempotency-key"]

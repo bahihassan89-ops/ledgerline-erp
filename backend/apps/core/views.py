@@ -1,5 +1,7 @@
+from django.utils import timezone
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.iam.access import ErpPermission, GlobalPermission, resolve_company
@@ -7,11 +9,13 @@ from apps.iam.access import ErpPermission, GlobalPermission, resolve_company
 from . import services
 from .api import CompanyReadOnlyViewSet, CompanyViewSet
 from .exceptions import BusinessError
-from .models import AuditLog, Branch, Company, CompanyModule, CompanyState, CostCenter, Currency, ExchangeRate
+from .models import (AuditLog, Branch, Company, CompanyModule, CompanyState, CostCenter, Currency, ExchangeRate,
+                     Notification, PushSubscription)
 from .modules import MODULE_REGISTRY
 from .serializers import (AuditLogSerializer, BranchSerializer, CompanyDraftCreateSerializer, CompanyModuleSerializer,
                           CompanyProvisioningSerializer, CompanySerializer, CostCenterSerializer, CurrencySerializer,
-                          ExchangeRateSerializer, RejectCompanySerializer)
+                          ExchangeRateSerializer, NotificationSerializer, PushSubscriptionSerializer,
+                          RejectCompanySerializer)
 
 
 class CurrencyViewSet(viewsets.ModelViewSet):
@@ -151,3 +155,48 @@ class CompanyApprovalViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, v
         s.is_valid(raise_exception=True)
         company = services.reject_company(self.get_object(), request.user, s.validated_data["reason"])
         return Response(self.get_serializer(company).data)
+
+
+class NotificationViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    """A user's own activity feed, across every company they belong to -- not a CompanyViewSet:
+    the bell icon should show approvals waiting anywhere, not just in the currently-selected
+    company."""
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return Notification.objects.filter(user=self.request.user)
+
+    @action(detail=False, methods=["get"], url_path="unread-count")
+    def unread_count(self, request):
+        return Response({"count": self.get_queryset().filter(read_at__isnull=True).count()})
+
+    @action(detail=False, methods=["post"], url_path="mark-all-read")
+    def mark_all_read(self, request):
+        self.get_queryset().filter(read_at__isnull=True).update(read_at=timezone.now())
+        return Response({"ok": True})
+
+    @action(detail=True, methods=["post"])
+    def read(self, request, pk=None):
+        notif = self.get_object()
+        if not notif.read_at:
+            notif.read_at = timezone.now()
+            notif.save(update_fields=["read_at"])
+        return Response(self.get_serializer(notif).data)
+
+
+class PushSubscriptionViewSet(mixins.CreateModelMixin, mixins.DestroyModelMixin, viewsets.GenericViewSet):
+    """Registers/unregisters this browser/phone for Web Push. One row per endpoint; re-subscribing
+    the same endpoint (e.g. after the VAPID key check runs again) just updates the keys."""
+    serializer_class = PushSubscriptionSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return PushSubscription.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        sub, _ = PushSubscription.objects.update_or_create(
+            endpoint=serializer.validated_data["endpoint"], user=self.request.user,
+            defaults={"p256dh": serializer.validated_data["p256dh"], "auth": serializer.validated_data["auth"]},
+        )
+        serializer.instance = sub

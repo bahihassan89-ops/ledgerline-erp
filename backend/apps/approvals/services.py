@@ -2,7 +2,7 @@
 from django.apps import apps as django_apps
 from django.db import transaction
 
-from apps.core import audit
+from apps.core import audit, notify
 from apps.core.exceptions import BusinessError
 
 from .models import ApprovalDecision, ApprovalRequest, ApprovalRule, DocumentType
@@ -20,6 +20,33 @@ DOC_MODELS = {
 def find_rule(company, doc_type, amount):
     return (ApprovalRule.objects.filter(company=company, document_type=doc_type, active=True, min_amount__lte=amount)
             .order_by("-min_amount").first())
+
+
+def _eligible_approvers(company_id, level):
+    """Everyone in this company whose active role is level >= `level` and can decide approvals
+    -- a step's "assignee" is a managerial level, not one named person (see decide()), so every
+    eligible approver gets notified and whoever acts first wins."""
+    from apps.iam.models import Membership
+    users, seen = [], set()
+    for m in (Membership.objects.filter(company_id=company_id, active=True)
+             .select_related("user").prefetch_related("roles")):
+        if m.user_id in seen:
+            continue
+        for r in m.roles.all():
+            if r.active and r.level >= level and "approvals.request.decide" in r.permissions:
+                users.append(m.user)
+                seen.add(m.user_id)
+                break
+    return users
+
+
+def _notify_pending_step(req, company_id):
+    notify.send_many(
+        _eligible_approvers(company_id, req.required_level),
+        f"Approval needed: {req.document_label}",
+        body=f"{DocumentType(req.document_type).label} for {req.amount}",
+        url=f"/approvals?request={req.pk}", category="approval", company_id=company_id,
+    )
 
 
 def ensure_approved(company, doc_type, doc, amount_base, user) -> bool:
@@ -40,6 +67,7 @@ def ensure_approved(company, doc_type, doc, amount_base, user) -> bool:
     doc.state = "to_approve"
     doc.save(update_fields=["state"])
     audit.record("approval_requested", doc, {"request": req.pk, "rule": rule.name, "amount": amount_base})
+    _notify_pending_step(req, company.pk)
     return False
 
 
@@ -86,4 +114,12 @@ def decide(req, user, approve: bool, comment=""):
     doc.save(update_fields=["state"])
     audit.record("approve" if approve else "reject", doc,
                  {"request": req.pk, "step": req.current_step, "comment": comment})
+    if not approve:
+        notify.send(req.requested_by, f"Rejected: {req.document_label}", body=comment,
+                    url=f"/approvals?request={req.pk}", category="approval", company_id=company_id)
+    elif req.state == ApprovalRequest.State.APPROVED:
+        notify.send(req.requested_by, f"Approved: {req.document_label}",
+                    url=f"/approvals?request={req.pk}", category="approval", company_id=company_id)
+    else:
+        _notify_pending_step(req, company_id)
     return req

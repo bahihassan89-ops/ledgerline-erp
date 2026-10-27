@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib import admin
 from django.http import JsonResponse
 from django.urls import include, path
@@ -7,7 +8,8 @@ from rest_framework.routers import DefaultRouter
 from apps.approvals.views import ApprovalRequestViewSet, ApprovalRuleViewSet
 from apps.billing.views import CustomerInvoiceViewSet, PaymentViewSet, VendorBillViewSet
 from apps.core.views import (AuditLogViewSet, BranchViewSet, CompanyApprovalViewSet, CompanyProvisioningViewSet,
-                             CompanyViewSetCurrent, CostCenterViewSet, CurrencyViewSet, ExchangeRateViewSet)
+                             CompanyViewSetCurrent, CostCenterViewSet, CurrencyViewSet, ExchangeRateViewSet,
+                             NotificationViewSet, PushSubscriptionViewSet)
 from apps.iam import auth_views
 from apps.iam.views import (GlobalPermissionCatalogView, GlobalRoleViewSet, HeartbeatView, PermissionCatalogView,
                             RoleViewSet, TeamActivityViewSet, UserViewSet)
@@ -80,6 +82,8 @@ r.register("global-roles", GlobalRoleViewSet)
 r.register("company-provisioning", CompanyProvisioningViewSet, basename="company-provisioning")
 r.register("company-approvals", CompanyApprovalViewSet, basename="company-approval")
 r.register("team-activity", TeamActivityViewSet, basename="team-activity")
+r.register("notifications", NotificationViewSet, basename="notification")
+r.register("push-subscriptions", PushSubscriptionViewSet, basename="push-subscription")
 
 auth = [
     path("login/", auth_views.LoginView.as_view()),
@@ -99,6 +103,7 @@ urlpatterns = [
     path("api/permissions/", PermissionCatalogView.as_view()),
     path("api/global-permissions/", GlobalPermissionCatalogView.as_view()),
     path("api/presence/heartbeat/", HeartbeatView.as_view()),
+    path("api/push/public-key/", lambda request: JsonResponse({"key": settings.WEBPUSH_PUBLIC_KEY})),
     path("api/reports/<slug:name>/", ReportView.as_view()),
     path("api/eta-settings/", EtaSettingsView.as_view()),
     path("api/close-checklist/", ChecklistView.as_view()),

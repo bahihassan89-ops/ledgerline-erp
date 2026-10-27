@@ -14,7 +14,7 @@ from apps.core.exceptions import BusinessError
 from apps.core.management.commands.setup_company import ensure_currencies, setup
 from apps.core.modules import DEFAULT_MODULES_BY_TYPE, MODULE_REGISTRY
 
-from . import audit
+from . import audit, notify
 from .models import Company, CompanyModule, CompanyState, Currency
 
 
@@ -64,6 +64,12 @@ def _require_state(company, *allowed):
                             "wrong_state")
 
 
+def _users_with_global_perm(perm):
+    from apps.iam.models import User
+    return [u for u in User.objects.filter(global_roles__active=True).distinct().prefetch_related("global_roles")
+            if u.has_global_perm(perm)]
+
+
 def submit_company(company, user):
     _require_state(company, CompanyState.DRAFT, CompanyState.REJECTED)
     company.state = CompanyState.PENDING_APPROVAL
@@ -72,6 +78,8 @@ def submit_company(company, user):
     company.rejected_reason = ""
     company.save(update_fields=["state", "submitted_by", "submitted_at", "rejected_reason"])
     audit.record("company_submitted", company, company_id=company.pk)
+    notify.send_many(_users_with_global_perm("company.activate"), f"Company awaiting approval: {company.name}",
+                     url=f"/company-approvals?company={company.pk}", category="company")
     return company
 
 
@@ -83,6 +91,8 @@ def approve_company(company, user):
     company.approved_at = timezone.now()
     company.save(update_fields=["state", "active", "approved_by", "approved_at"])
     audit.record("company_approved", company, company_id=company.pk)
+    notify.send(company.submitted_by, f"Company approved: {company.name}", category="company",
+               url=f"/company?company={company.pk}", company_id=company.pk)
     return company
 
 
@@ -94,4 +104,6 @@ def reject_company(company, user, reason):
     company.approved_at = timezone.now()
     company.save(update_fields=["state", "rejected_reason", "approved_by", "approved_at"])
     audit.record("company_rejected", company, {"reason": reason}, company_id=company.pk)
+    notify.send(company.submitted_by, f"Company rejected: {company.name}", body=reason, category="company",
+               url=f"/company-provisioning?company={company.pk}")
     return company

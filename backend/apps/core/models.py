@@ -289,6 +289,44 @@ def _attachment_path(instance, filename):
     return f"attachments/{instance.company_id}/{uuid.uuid4().hex}.{ext}"
 
 
+class Notification(models.Model):
+    """An in-app activity item for one user (approvals, company workflow, system events).
+    Delivery beyond the in-app feed (web push) is attempted from notify.send() but never
+    blocks creation -- see apps/core/notify.py."""
+    class Category(models.TextChoices):
+        APPROVAL = "approval", "Approval"
+        COMPANY = "company", "Company"
+        SYSTEM = "system", "System"
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="notifications")
+    company = models.ForeignKey(Company, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    category = models.CharField(max_length=20, choices=Category.choices, default=Category.SYSTEM)
+    title = models.CharField(max_length=200)
+    body = models.CharField(max_length=500, blank=True)
+    url = models.CharField(max_length=255, blank=True, help_text="Frontend route to open, e.g. /approvals/42")
+    read_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["user", "read_at"])]
+
+    def __str__(self):
+        return f"{self.user} — {self.title}"
+
+
+class PushSubscription(models.Model):
+    """A browser/phone endpoint registered for Web Push (one per installed PWA instance)."""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="push_subscriptions")
+    endpoint = models.URLField(max_length=500, unique=True)
+    p256dh = models.CharField(max_length=255)
+    auth = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.user} push @ {self.endpoint[:40]}..."
+
+
 class Attachment(models.Model):
     """Supporting documents (supplier invoice scans, contracts, customs declarations, bank advices).
     Files are only served through the authenticated API; attachments of posted documents cannot be deleted."""
