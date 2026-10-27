@@ -17,6 +17,9 @@ x-app-env: &env
   ERP_WEBPUSH_PUBLIC_KEY: ${ERP_WEBPUSH_PUBLIC_KEY:-}
   ERP_WEBPUSH_PRIVATE_KEY: ${ERP_WEBPUSH_PRIVATE_KEY:-}
   ERP_WEBPUSH_CONTACT_EMAIL: ${ERP_WEBPUSH_CONTACT_EMAIL:-admin@example.com}
+  ERP_SENTRY_DSN: ${ERP_SENTRY_DSN:-}             # unset = error tracking disabled (see docs/OPERATIONS.md)
+  ERP_SENTRY_TRACES_SAMPLE_RATE: ${ERP_SENTRY_TRACES_SAMPLE_RATE:-0}
+  ERP_RELEASE: ${ERP_RELEASE:-}
 
 x-worker: &worker
   build: ./backend
@@ -74,7 +77,10 @@ services:
     command: sh -c "while true; do python manage.py run_recurring; sleep 3600; done"
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_SENTRY_DSN: ${ERP_SENTRY_DSN_FRONTEND:-}   # separate Sentry project from the backend; unset = disabled
     depends_on: { backend: { condition: service_healthy } }
     restart: unless-stopped
     logging: *logging

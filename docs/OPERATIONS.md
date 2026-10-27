@@ -115,6 +115,19 @@ brief interruption: upgrade outside working hours.
 Install OS security updates monthly: `sudo apt update && sudo apt upgrade -y`, then `sudo reboot`
 (everything starts again by itself).
 
+**Error tracking (optional).** By default, errors are only visible in `docker compose logs`. To get
+emailed/alerted automatically when something breaks, create a free project at
+[sentry.io](https://sentry.io) (one for the backend, one for the frontend, so they don't mix traces),
+then add to `.env`:
+```
+ERP_SENTRY_DSN=<backend project DSN>
+ERP_SENTRY_DSN_FRONTEND=<frontend project DSN>
+```
+then `sudo ./install.sh` (or `docker compose up -d --build backend frontend migrate webhooks eta scheduler`)
+to rebuild with it enabled. Leave both unset to keep error tracking off; nothing is sent anywhere
+until a DSN is configured. Frontend events never include the page's cookies or form field values
+(`sendDefaultPii: false`); backend events never include request bodies or user PII for the same reason.
+
 ## 7. Things never to do
 
 * **Never change `ERP_FIELD_ENCRYPTION_KEY`** in `.env`: MFA secrets and ETA credentials are encrypted with it.

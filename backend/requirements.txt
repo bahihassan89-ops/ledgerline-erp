@@ -11,5 +11,6 @@ psycopg==3.3.6
 psycopg-binary==3.3.6
 PyOTP==2.10.0
 pywebpush==2.1.0
+sentry-sdk==2.73.0
 pytest==9.1.1
 pytest-django==4.14.0

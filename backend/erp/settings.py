@@ -40,6 +40,26 @@ FIELD_ENCRYPTION_KEY = env("ERP_FIELD_ENCRYPTION_KEY", "dev-field-key-change-me"
 ERP_TRUSTED_PROXIES = int(env("ERP_TRUSTED_PROXIES", "0"))
 ALLOWED_HOSTS = env_list("ERP_ALLOWED_HOSTS", "localhost,127.0.0.1")
 
+# --- Error tracking (Sentry) ------------------------------------------------
+# Empty by default -- init() is simply skipped, so this is a no-op until a DSN is set. Wired up
+# this early (before INSTALLED_APPS) so Sentry can also catch errors during app/settings loading.
+# send_default_pii is explicitly off: this app holds customer/vendor/payroll-adjacent data, so we
+# never want request bodies, user emails, or cookies forwarded to a third-party SaaS by default.
+SENTRY_DSN = env("ERP_SENTRY_DSN", "")
+if SENTRY_DSN:
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+    from sentry_sdk.integrations.logging import LoggingIntegration
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=ERP_ENV,
+        release=env("ERP_RELEASE", None),
+        integrations=[DjangoIntegration(), LoggingIntegration(level=None, event_level="ERROR")],
+        traces_sample_rate=float(env("ERP_SENTRY_TRACES_SAMPLE_RATE", "0")),
+        send_default_pii=False,
+    )
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
