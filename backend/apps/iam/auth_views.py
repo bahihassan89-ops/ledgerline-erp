@@ -275,7 +275,12 @@ class MeView(APIView):
                 "approval_limit": (lambda x: None if x is None else str(x))(u.approval_limit_for(m.company.pk)),
                 "permissions": sorted(u.permissions_for(m.company.pk)),
             })
-        if u.is_superuser and not companies:
+        # Superuser and the global CEO role (company.activate is the CEO-defining permission --
+        # same check used elsewhere, e.g. UserSerializer.validate_global_role_ids) both get an
+        # overview of every active company even without a per-company Membership, so they can see
+        # and switch between all companies on the platform. This only fires as a fallback when the
+        # account has no explicit memberships of its own.
+        if (u.is_superuser or u.has_global_perm("company.activate")) and not companies:
             from apps.core.models import Company
             from .permissions_catalog import CATALOG
             companies = [{"id": c.pk, "name": c.name, "code": c.code, "base_currency": c.base_currency_id,

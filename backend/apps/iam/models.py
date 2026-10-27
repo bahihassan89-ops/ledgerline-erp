@@ -61,12 +61,19 @@ class User(AbstractUser):
         return (self.memberships.filter(company_id=company_id, active=True, company__active=True)
                 .prefetch_related("roles").first())
 
+    def _is_platform_ceo(self) -> bool:
+        """True for a superuser or a holder of the global CEO role (the "company.activate"
+        permission). The CEO oversees every company on the platform and is not expected to hold
+        a personal Membership everywhere -- so, like a superuser, they get full standing
+        permissions in any company they have no Membership in, rather than being locked out."""
+        return self.is_superuser or self.has_global_perm("company.activate")
+
     def permissions_for(self, company_id) -> set:
         if self.is_superuser:
             return set(CATALOG)
         m = self.membership(company_id)
         if not m:
-            return set()
+            return set(CATALOG) if self.has_global_perm("company.activate") else set()
         perms = set()
         for r in m.roles.all():
             if r.active:
@@ -75,7 +82,9 @@ class User(AbstractUser):
 
     def level_for(self, company_id) -> int:
         m = self.membership(company_id)
-        return max((r.level for r in m.roles.all() if r.active), default=0) if m else 0
+        if not m:
+            return 5 if self._is_platform_ceo() else 0
+        return max((r.level for r in m.roles.all() if r.active), default=0)
 
     def approval_limit_for(self, company_id):
         """Highest approval limit across active roles. None = unlimited."""
@@ -83,7 +92,7 @@ class User(AbstractUser):
             return None
         m = self.membership(company_id)
         if not m:
-            return Decimal("0")
+            return None if self.has_global_perm("company.activate") else Decimal("0")
         limits = [r.approval_limit for r in m.roles.all() if r.active]
         if not limits:
             return Decimal("0")
