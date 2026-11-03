@@ -8,6 +8,7 @@ from apps.billing.models import Invoice, InvoiceLine
 from apps.core.exceptions import BusinessError
 from apps.einvoice import services as eta
 from apps.einvoice.models import EtaDocument
+from apps.partners.models import Partner
 
 from .conftest import D, tb
 
@@ -42,6 +43,32 @@ def test_vendor_bill_with_vat_and_withholding(eg):
 def test_withholding_threshold(eg):
     b = bill(eg, 250, ref="B-small")  # below EGP 300 → no withholding
     assert b.amount_wht == 0 and b.amount_total == D(285)
+
+
+def test_withholding_threshold_cumulative_per_payee(eg):
+    """EGP 300 applies to the amount paid to a payee across the filing period, not to each document
+    in isolation (FC review, Section 11/20: "EGP 300 applies to each amount paid, not to each
+    document")."""
+    b1 = bill(eg, 200, ref="B-cum1")  # 200 alone < 300 → no withholding
+    assert b1.amount_wht == 0 and b1.amount_total == D(228)
+    b2 = bill(eg, 150, ref="B-cum2")  # same quarter, same vendor: 200 + 150 = 350 ≥ 300 cumulatively
+    assert b2.amount_wht == D(150) * D("3") / D(100)
+    assert b2.amount_total == D(150) + D(150) * D("14") / D(100) - b2.amount_wht
+    # a document in the next quarter starts a fresh cumulation window
+    b3 = Invoice.objects.create(company=eg.c, move_type="in_invoice", partner=eg.vendor, currency_id="EGP",
+                                date=eg.d(7, 1), reference="B-cum3")
+    InvoiceLine.objects.create(invoice=b3, description="Maintenance service", account=eg.A["520203"], quantity=1,
+                               unit_price=100, tax=eg.T["VAT14-P"], withholding_tax=eg.T["WHT3-SRV-P"])
+    b3 = billing.post_invoice(b3, eg.accountant)
+    assert b3.amount_wht == 0
+    # a different vendor's payments don't count towards this vendor's cumulative threshold
+    other_vendor = Partner.objects.create(company=eg.c, code="V2", name="Other Vendor", is_vendor=True)
+    b4 = Invoice.objects.create(company=eg.c, move_type="in_invoice", partner=other_vendor, currency_id="EGP",
+                                date=eg.d(4, 11), reference="B-cum4")
+    InvoiceLine.objects.create(invoice=b4, description="Maintenance service", account=eg.A["520203"], quantity=1,
+                               unit_price=120, tax=eg.T["VAT14-P"], withholding_tax=eg.T["WHT3-SRV-P"])
+    b4 = billing.post_invoice(b4, eg.accountant)
+    assert b4.amount_wht == 0
 
 
 def test_customer_withholding_and_form41(eg):

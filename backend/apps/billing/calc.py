@@ -23,9 +23,18 @@ def compute_line(quantity, unit_price, discount_pct, tax, decimals, wht=None):
     return subtotal, tax_amount, wht_amount, subtotal + tax_amount - wht_amount
 
 
-def apply_totals(doc, lines, decimals):
+def apply_totals(doc, lines, decimals, wht_base_before=None):
     """Recompute each line and the document header totals. Saves lines; caller saves the document.
-    Withholding is only applied when the document reaches the tax's minimum base (e.g. EGP 300)."""
+
+    Withholding is only applied once the *cumulative* base paid/received for this payee under a given
+    withholding-tax code reaches the tax's minimum base (e.g. EGP 300) -- the threshold applies per
+    amount paid to a payee, not per document (FC review, Section 11/20: "EGP 300 applies to each
+    amount paid, not to each document"). `wht_base_before` is an optional {tax_id: Decimal} map, in
+    the document's base currency, of the amount already recognised for this payee under each
+    withholding-tax code earlier in the current filing period, from other posted documents -- see
+    apps.billing.services._wht_base_before. Callers that don't support WHT (sales/purchase orders)
+    simply omit it, which preserves the old per-document-only check."""
+    wht_base_before = wht_base_before or {}
     untaxed = tax_total = wht_total = ZERO
     for ln in lines:
         wht = getattr(ln, "withholding_tax", None)
@@ -37,9 +46,11 @@ def apply_totals(doc, lines, decimals):
     rate = D(getattr(doc, "rate", 1) or 1)
     for ln in lines:
         wht = getattr(ln, "withholding_tax", None)
-        if wht is not None and untaxed * rate < D(wht.min_base):
-            ln.total += ln._wht
-            ln._wht = ZERO
+        if wht is not None:
+            prior = D(wht_base_before.get(wht.id, ZERO))
+            if prior + untaxed * rate < D(wht.min_base):
+                ln.total += ln._wht
+                ln._wht = ZERO
         fields = ["subtotal", "tax_amount", "total"]
         if hasattr(ln, "wht_amount"):
             ln.wht_amount = ln._wht

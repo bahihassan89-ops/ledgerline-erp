@@ -44,9 +44,45 @@ def control_account(inv):
                                                                                                 inv.partner)
 
 
+def _quarter_bounds(d):
+    """Calendar quarter containing date d -- the window Form 41 reports against, and the window
+    used to cumulate the withholding-tax minimum-base threshold per payee (see _wht_base_before)."""
+    import calendar
+    q_start_month = (d.month - 1) // 3 * 3 + 1
+    start = d.replace(month=q_start_month, day=1)
+    end_month = q_start_month + 2
+    end = d.replace(month=end_month, day=calendar.monthrange(d.year, end_month)[1])
+    return start, end
+
+
+def _wht_base_before(inv, lines):
+    """Cumulative untaxed base (document's base currency) already recognised for this partner under
+    each withholding-tax code used on `lines`, from the partner's *other* posted documents in the
+    current calendar quarter. The EGP 300 (or per-code) minimum base applies to the amount paid to a
+    payee, not to each document in isolation (FC review, Section 11/20), so a payee who is below the
+    threshold on every individual bill but crosses it cumulatively within the quarter must still have
+    tax withheld once the cumulative total reaches the threshold."""
+    wht_ids = {ln.withholding_tax_id for ln in lines if ln.withholding_tax_id}
+    if not wht_ids or not inv.pk:
+        return {}
+    types = CUSTOMER_TYPES if inv.is_customer else {InvoiceType.IN_INVOICE, InvoiceType.IN_REFUND}
+    start, end = _quarter_bounds(inv.date)
+    other_lines = (InvoiceLine.objects.filter(invoice__company=inv.company, invoice__partner_id=inv.partner_id,
+                                              invoice__state=DocState.POSTED, invoice__move_type__in=types,
+                                              invoice__date__gte=start, invoice__date__lte=end,
+                                              withholding_tax_id__in=wht_ids)
+                   .exclude(invoice_id=inv.pk).select_related("invoice"))
+    totals = defaultdict(lambda: ZERO)
+    for ln in other_lines:
+        sign = -1 if ln.invoice.is_refund else 1
+        totals[ln.withholding_tax_id] += sign * gl.to_base(inv.company, ln.subtotal, ln.invoice.rate)
+    return totals
+
+
 def recompute(inv):
     lines = list(inv.lines.select_related("tax", "withholding_tax"))
-    apply_totals(inv, lines, doc_decimals(inv.currency))
+    wht_base_before = _wht_base_before(inv, lines)
+    apply_totals(inv, lines, doc_decimals(inv.currency), wht_base_before)
     if inv.state in (DocState.DRAFT, DocState.TO_APPROVE, DocState.APPROVED):
         inv.amount_residual = inv.amount_total
     inv.save()
