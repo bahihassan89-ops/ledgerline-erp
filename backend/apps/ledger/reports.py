@@ -295,6 +295,151 @@ def cash_flow(company, date_from, date_to):
             "actual_cash_change": str(cash_change), "reconciled": computed == cash_change}
 
 
+def liquidity_view(company, as_of, horizon_days=30):
+    """Cash-forecast snapshot: today's cash+bank GL balance, plus near-term (next `horizon_days`)
+    expected inflows from open AR invoices and outstanding inbound cheques, and expected outflows
+    from open AP bills and outstanding outbound cheques. AR/AP figures are base-currency (aging()
+    already converts each document at its own rate); cheque amounts are shown per their own
+    document currency and are NOT converted to base currency (Payment keeps no base-currency
+    amount), so treat the cheque subtotals as an indicative per-currency guide rather than a
+    number to add straight onto the base-currency cash position."""
+    from datetime import timedelta
+
+    from apps.billing.services import aging
+    horizon = as_of + timedelta(days=horizon_days)
+
+    cash_sum = _sums(company, date_to=as_of, extra=Q(account_type__in=["cash", "bank"]))
+    cash_and_bank = sum((d - c for d, c in cash_sum.values()), ZERO)
+
+    ar, ap = aging(company, "receivable", as_of), aging(company, "payable", as_of)
+
+    def due_soon(ag):
+        soon = overdue = ZERO
+        for row in ag["rows"]:
+            for doc in row["documents"]:
+                if doc["due_date"] and doc["due_date"] <= horizon:
+                    if doc["due_date"] < as_of:
+                        overdue += Decimal(doc["open_base"])
+                    else:
+                        soon += Decimal(doc["open_base"])
+        return soon, overdue
+
+    ar_soon, ar_overdue = due_soon(ar)
+    ap_soon, ap_overdue = due_soon(ap)
+
+    from apps.billing.models import Payment
+    cheque_qs = Payment.objects.filter(company=company, method="cheque", cheque_due_date__lte=horizon)
+    inbound = cheque_qs.filter(direction="inbound", cheque_state__in=["in_hand", "deposited"])
+    outbound = cheque_qs.filter(direction="outbound", cheque_state="issued")
+
+    def by_currency(qs):
+        return {r["currency"]: str(r["t"]) for r in qs.values("currency").annotate(t=Sum("amount"))}
+
+    projected = cash_and_bank + ar_soon + ar_overdue - ap_soon - ap_overdue
+    return {
+        "as_of": as_of, "horizon_days": horizon_days, "horizon_date": horizon,
+        "cash_and_bank": str(cash_and_bank),
+        "receivables_total": ar["totals"]["total"], "receivables_due_soon": str(ar_soon),
+        "receivables_overdue": str(ar_overdue),
+        "payables_total": ap["totals"]["total"], "payables_due_soon": str(ap_soon),
+        "payables_overdue": str(ap_overdue),
+        "cheques_receivable_by_currency": by_currency(inbound),
+        "cheques_payable_by_currency": by_currency(outbound),
+        "projected_cash_base_currency": str(projected),
+    }
+
+
+def petty_cash_register(company, as_of):
+    """Status of every imprest / petty-cash journal (Journal.is_imprest): the current GL balance
+    of its default cash account versus the fixed float it should be replenished back up to. A
+    fund sitting below its float is due for a top-up -- booked as an ordinary Payment, nothing
+    here posts automatically."""
+    from .models import Journal
+    rows = []
+    for j in Journal.objects.filter(company=company, is_imprest=True).select_related("default_account"):
+        if not j.default_account_id:
+            continue
+        sums = _sums(company, date_to=as_of, extra=Q(account=j.default_account_id))
+        d, c = sums.get(j.default_account_id, (ZERO, ZERO))
+        balance = d - c
+        rows.append({"journal_id": j.pk, "code": j.code, "name": j.name, "account": j.default_account.code,
+                     "float_amount": str(j.imprest_amount), "balance": str(balance),
+                     "due_for_topup": balance < j.imprest_amount,
+                     "topup_amount": str(max(j.imprest_amount - balance, ZERO))})
+    return {"as_of": as_of, "rows": rows}
+
+
+def intercompany_reconciliation(as_of):
+    """Every intercompany partner link (Partner.is_intercompany + linked_company), shown from
+    both sides: the open AR/AP balance this company carries against the partner record that
+    represents the other company, and -- where that other company has a mirroring partner record
+    pointing back -- its balance too, so a controller can see at a glance whether the two sides
+    agree. This is a reconciliation aid only: no elimination entry is posted anywhere (the same
+    policy as branch_income_statement() for inter-branch balances -- nothing here is eliminated
+    automatically)."""
+    from apps.billing.services import aging
+    from apps.partners.models import Partner
+
+    def partner_balance(partner):
+        bal = ZERO
+        for kind, sign in (("receivable", 1), ("payable", -1)):
+            row = next((r for r in aging(partner.company, kind, as_of)["rows"] if r["partner_id"] == partner.pk),
+                       None)
+            if row:
+                bal += sign * Decimal(row["total"])
+        return bal
+
+    links = Partner.objects.filter(is_intercompany=True, linked_company__isnull=False).select_related(
+        "company", "linked_company")
+    seen, rows = set(), []
+    for p in links:
+        if p.pk in seen:
+            continue
+        mirror = Partner.objects.filter(company=p.linked_company_id, linked_company=p.company_id,
+                                        is_intercompany=True).select_related("company").first()
+        seen.add(p.pk)
+        if mirror:
+            seen.add(mirror.pk)
+        our_balance = partner_balance(p)
+        their_balance = partner_balance(mirror) if mirror else None
+        rows.append({
+            "company_id": p.company_id, "company": p.company.name, "currency": p.company.base_currency_id,
+            "partner_id": p.pk, "partner": p.name,
+            "linked_company_id": p.linked_company_id, "linked_company": p.linked_company.name,
+            "our_balance": str(our_balance),
+            "mirror_partner_id": mirror.pk if mirror else None,
+            "their_currency": mirror.company.base_currency_id if mirror else None,
+            "their_balance": str(their_balance) if their_balance is not None else None,
+            "difference": str(our_balance + their_balance) if their_balance is not None else None,
+            "reconciled": their_balance is not None and our_balance == -their_balance,
+        })
+    return {"as_of": as_of, "rows": rows}
+
+
+def consolidated_trial_balance(companies, date_from, date_to, max_level=None):
+    """Each company's trial balance plus a naive consolidated total (straight sum by account code
+    across every company -- the same non-elimination policy as branch_income_statement(): no
+    intercompany balances are eliminated, because none of this is tracked as a single group
+    ledger). Rows are grouped by account `code`, so this assumes the group's companies share one
+    chart-of-accounts template; a coincidental code collision between unrelated accounts in two
+    companies would merge incorrectly -- worth flagging to the FC before relying on this for
+    statutory consolidation."""
+    per_company, totals, names = [], defaultdict(lambda: {k: ZERO for k in ("opening", "debit", "credit", "closing")}), {}
+    for c in companies:
+        tb = trial_balance(c, date_from, date_to, max_level=max_level, hide_zero=True)
+        per_company.append({"company_id": c.pk, "company": c.name, "trial_balance": tb})
+        for r in tb["rows"]:
+            names[r["code"]] = r["name"]
+            for k in ("opening", "debit", "credit", "closing"):
+                totals[r["code"]][k] += Decimal(r[k])
+    consolidated_rows = [{"code": k, "name": names[k], **{kk: str(vv) for kk, vv in v.items()}}
+                         for k, v in sorted(totals.items())]
+    grand = {k: sum((Decimal(r[k]) for r in consolidated_rows), ZERO)
+             for k in ("opening", "debit", "credit", "closing")}
+    return {"date_from": date_from, "date_to": date_to, "companies": per_company,
+            "consolidated": {"rows": consolidated_rows, "totals": {k: str(v) for k, v in grand.items()}}}
+
+
 def comparative(fn, company, current, previous, **kw):
     """Run a statement for two periods and attach `previous` amounts to every row (by account)."""
     cur, prev = fn(company, *current, **kw), fn(company, *previous, **kw)

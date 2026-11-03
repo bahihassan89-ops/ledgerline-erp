@@ -171,6 +171,13 @@ class Journal(CompanyScoped):
     currency = models.ForeignKey(Currency, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
     # If False, users cannot create manual entries in this journal (sub-ledger journals).
     allow_manual = models.BooleanField(default=True)
+    # Imprest / petty-cash funds: a cash journal topped back up to a fixed float rather than left
+    # to accumulate. Purely informational for the "Petty Cash" report (apps.ledger.reports) --
+    # ordinary Payments still book the disbursements and the replenishment, nothing new is posted
+    # automatically here.
+    is_imprest = models.BooleanField(default=False, help_text="Petty-cash / imprest fund kept at a fixed float.")
+    imprest_amount = models.DecimalField(max_digits=20, decimal_places=2, default=Decimal("0"),
+                                         help_text="The fixed float this fund is replenished back up to.")
     active = models.BooleanField(default=True)
 
     class Meta:
@@ -268,6 +275,8 @@ class AccountingSettings(models.Model):
     opening_equity_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
     cheques_receivable_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
     cheques_payable_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
+    cheque_bounce_fee_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+",
+                                                   help_text="Where bounced-cheque bank fees post (FC review).")
     unrealized_fx_gain_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
     unrealized_fx_loss_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
     asset_disposal_gain_account = models.ForeignKey(Account, null=True, on_delete=models.PROTECT, related_name="+")
@@ -286,6 +295,14 @@ class AccountingSettings(models.Model):
     inventory_journal = models.ForeignKey(Journal, null=True, on_delete=models.PROTECT, related_name="+")
     general_journal = models.ForeignKey(Journal, null=True, on_delete=models.PROTECT, related_name="+")
     closing_journal = models.ForeignKey(Journal, null=True, on_delete=models.PROTECT, related_name="+")
+    # Expected Credit Loss (ECL) provisioning rates applied to AR aging buckets (see
+    # apps.billing.services.aging / BUCKETS) to compute a bad-debt provision for the
+    # "ECL aged receivables" report. Percentages, e.g. 5.00 = 5%. FC to confirm actual rates.
+    ecl_rate_current = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0"))
+    ecl_rate_1_30 = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0"))
+    ecl_rate_31_60 = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0"))
+    ecl_rate_61_90 = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0"))
+    ecl_rate_over_90 = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0"))
 
 
 class EntryState(models.TextChoices):

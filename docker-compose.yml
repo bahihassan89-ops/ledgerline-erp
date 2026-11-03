@@ -59,6 +59,7 @@ services:
     <<: *worker
     volumes:
       - media:/app/media
+      - backup_ctl:/app/backup_ctl   # small request/status files only -- see BackupView, never the dump itself
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(urllib.request.urlopen(urllib.request.Request('http://localhost:8000/health/', headers={'X-Forwarded-Proto': 'https'})).status != 200)"]
       interval: 15s
@@ -113,6 +114,7 @@ services:
     volumes:
       - ./backups:/backups           # copy this folder off the server (see docs/OPERATIONS.md)
       - media:/media
+      - backup_ctl:/control          # on-demand trigger from the "Back up now" button
     depends_on: { db: { condition: service_healthy } }
     restart: unless-stopped
     logging: *logging
@@ -120,5 +122,6 @@ services:
 volumes:
   pgdata:
   media:        # attachments: included in the backups
+  backup_ctl:   # request/status handshake between the backend and backup containers
   caddy_data:   # TLS certificates
   caddy_config:

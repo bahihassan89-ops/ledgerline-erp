@@ -1,21 +1,34 @@
+import json
+import os
+import re
+import time
+import uuid
+
+from django.conf import settings
+from django.http import HttpResponse
 from django.utils import timezone
+from openpyxl import Workbook
+from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.iam.access import ErpPermission, GlobalPermission, resolve_company
 
 from . import services
 from .api import CompanyReadOnlyViewSet, CompanyViewSet
+from .audit import record as audit_record
 from .exceptions import BusinessError
 from .models import (AuditLog, Branch, Company, CompanyModule, CompanyState, CostCenter, Currency, ExchangeRate,
                      Notification, PushSubscription)
 from .modules import MODULE_REGISTRY
-from .serializers import (AuditLogSerializer, BranchSerializer, CompanyDraftCreateSerializer, CompanyModuleSerializer,
-                          CompanyProvisioningSerializer, CompanySerializer, CostCenterSerializer, CurrencySerializer,
-                          ExchangeRateSerializer, NotificationSerializer, PushSubscriptionSerializer,
-                          RejectCompanySerializer)
+from .serializers import (AuditLogSerializer, BranchSerializer, CompanyDraftCreateSerializer, CompanyLiteSerializer,
+                          CompanyModuleSerializer, CompanyProvisioningSerializer, CompanySerializer,
+                          CostCenterSerializer, CurrencySerializer, ExchangeRateSerializer, NotificationSerializer,
+                          PushSubscriptionSerializer, RejectCompanySerializer)
 
 
 class CurrencyViewSet(viewsets.ModelViewSet):
@@ -24,6 +37,18 @@ class CurrencyViewSet(viewsets.ModelViewSet):
     permission_classes = [ErpPermission]
     perms = {"list": "authenticated", "*": "core.currency.manage"}
     http_method_names = ["get", "post", "patch", "head", "options"]
+    pagination_class = None
+
+
+class CompanyLiteViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
+    """Read-only list of every active company in the install (id/code/name only, no financial
+    data) -- not scoped by X-Company, since by definition it needs to show companies other than
+    the caller's own. Used by the partner form to pick Partner.linked_company when marking a
+    partner as intercompany."""
+    queryset = Company.objects.filter(state=CompanyState.ACTIVE).order_by("name")
+    serializer_class = CompanyLiteSerializer
+    permission_classes = [ErpPermission]
+    perms = {"list": "authenticated"}
     pagination_class = None
 
 
@@ -200,3 +225,132 @@ class PushSubscriptionViewSet(mixins.CreateModelMixin, mixins.DestroyModelMixin,
             defaults={"p256dh": serializer.validated_data["p256dh"], "auth": serializer.validated_data["auth"]},
         )
         serializer.instance = sub
+
+
+_NUMERIC_RE = re.compile(r"^-?\d+(\.\d+)?$")
+
+
+def _cell_value(v):
+    """Turn a JSON value from a report row into a genuine spreadsheet cell value -- numeric-looking
+    strings (every amount/qty in our reports is serialised as a decimal string, e.g. "1234.5600")
+    become real numeric cells Excel can sum/format, instead of text, which is the whole point of
+    exporting to .xlsx rather than .csv."""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return v
+    if isinstance(v, str):
+        s = v.strip()
+        if s and _NUMERIC_RE.match(s):
+            n = float(s)
+            return int(n) if n.is_integer() and abs(n) < 1e15 else n
+        return v
+    return str(v)
+
+
+class ExportXlsxView(APIView):
+    """Generic 'turn these columns + rows into a real .xlsx file' endpoint, shared by every
+    report and register in the app (Financial Reports, cheque/guarantee-cheque/instalment-plan/
+    consignment registers, etc.) so none of them need bespoke export code -- the client already
+    builds a cols/rows pair for its existing CSV export (see lib/format.ts toCSV); this just
+    renders the same shape as a genuine spreadsheet instead of plain text. No company-scoped data
+    is read here -- the client sends exactly the rows it already fetched and rendered."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        body = request.data or {}
+        filename = str(body.get("filename") or "export.xlsx").strip() or "export.xlsx"
+        if not filename.lower().endswith(".xlsx"):
+            filename += ".xlsx"
+        sheets = body.get("sheets") or [{"name": body.get("sheet_name", "Sheet1"),
+                                         "cols": body.get("cols", []), "rows": body.get("rows", [])}]
+        wb = Workbook()
+        wb.remove(wb.active)
+        used_names = set()
+        for sheet in sheets[:50]:
+            name = str(sheet.get("name") or "Sheet1").strip()[:31] or "Sheet1"
+            base, i = name, 2
+            while name in used_names:
+                name = f"{base[:28]} {i}"
+                i += 1
+            used_names.add(name)
+            ws = wb.create_sheet(name)
+            cols = sheet.get("cols") or []
+            rows = sheet.get("rows") or []
+            ws.append([str(c.get("title") or c.get("key") or "") for c in cols])
+            for cell in ws[1]:
+                cell.font = Font(bold=True)
+            for row in rows[:100000]:
+                ws.append([_cell_value(row.get(c.get("key"))) for c in cols])
+            for i, c in enumerate(cols, start=1):
+                ws.column_dimensions[get_column_letter(i)].width = min(max(len(str(c.get("title") or "")) + 2, 10), 40)
+            if rows:
+                ws.freeze_panes = "A2"
+        if not wb.sheetnames:
+            wb.create_sheet("Sheet1")
+        resp = HttpResponse(content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+        wb.save(resp)
+        return resp
+
+
+# A request older than this is treated as abandoned (e.g. the backup container was restarted
+# mid-run) so a stuck "in progress" state never permanently blocks the button.
+BACKUP_REQUEST_STALE_SECONDS = 600
+
+
+class BackupView(APIView):
+    """On-demand database + media backup for the Central Financial Controller / CEO, so they are
+    not stuck waiting for the daily schedule (see deploy/backup/backup.sh, BACKUP_INTERVAL_HOURS).
+
+    This process never touches the database credentials, the GPG passphrase, or the encrypted
+    backup files -- all of that stays inside the separate `backup` container (least privilege,
+    same reasoning as erp_app being DML-only). A click here just drops a small request file on a
+    shared control volume; the backup container notices it within a few seconds, runs the backup,
+    and writes the result back to the same volume. There is no cloud destination wired up yet
+    (nothing here has gone live to a cloud host) -- this is the on-demand trigger + status piece,
+    deliberately left generic (see backup() in backup.sh) so pushing the resulting file to S3 /
+    GCS / Backblaze / rclone later is a small addition to that function, not a redesign."""
+    permission_classes = [GlobalPermission]
+    global_perms = {"get": "ops.backup.manage", "post": "ops.backup.manage"}
+
+    def get(self, request):
+        return Response(_backup_status())
+
+    def post(self, request):
+        ctl = settings.BACKUP_CTL_DIR
+        os.makedirs(ctl, exist_ok=True)
+        now = time.time()
+        for name in os.listdir(ctl):
+            if name.startswith("request-"):
+                path = os.path.join(ctl, name)
+                if now - os.path.getmtime(path) < BACKUP_REQUEST_STALE_SECONDS:
+                    return Response({"detail": "A backup is already in progress."}, status=409)
+                os.remove(path)  # stale -- the backup worker never picked it up; allow a fresh one
+        req_id = uuid.uuid4().hex[:12]
+        payload = {"id": req_id, "requested_by": request.user.get_username(),
+                   "requested_at": timezone.now().isoformat()}
+        tmp = os.path.join(ctl, f".request-{req_id}.tmp")
+        with open(tmp, "w") as fh:
+            json.dump(payload, fh)
+        os.rename(tmp, os.path.join(ctl, f"request-{req_id}.json"))  # atomic publish
+        audit_record("backup.requested", object_type="backup", object_id=req_id, changes=payload)
+        return Response({"detail": "Backup requested.", **payload}, status=202)
+
+
+def _backup_status():
+    ctl = settings.BACKUP_CTL_DIR
+    status = {"last_backup_at": None, "last_status": None, "last_trigger": None,
+              "requested_by": None, "last_size_kb": None, "pending": False}
+    if os.path.isdir(ctl):
+        status["pending"] = any(n.startswith("request-") for n in os.listdir(ctl))
+        path = os.path.join(ctl, "status.json")
+        if os.path.exists(path):
+            try:
+                with open(path) as fh:
+                    status.update(json.load(fh))
+            except (OSError, ValueError):
+                pass
+    return status

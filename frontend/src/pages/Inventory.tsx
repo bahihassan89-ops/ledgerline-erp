@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { AccountSelect, ProductSelect, SimpleSelect, TaxSelect, WarehouseSelect } from '../components/pickers'
-import { DataTable, Field, Modal, PageHead, Tabs, useAction } from '../components/ui'
+import { AccountSelect, PartnerSelect, ProductSelect, SimpleSelect, TaxSelect, WarehouseSelect } from '../components/pickers'
+import { DataTable, Export, Field, Modal, PageHead, Tabs, useAction, useToast } from '../components/ui'
 import { patch, post } from '../lib/api'
 import { useAuth } from '../lib/auth'
 import { fmtDate, label, money, num, qty, today } from '../lib/format'
@@ -69,46 +69,112 @@ export function Stock() {
   const levels = useFetch<any>('/stock-levels/', { page_size: 500 })
   const levelsError = levels.error
   const moves = useFetch<any>('/stock-moves/', { page_size: 200 })
+  const warehouses = useFetch<any>('/warehouses/')
+  const consignment = useFetch<any>('/reports/consignment-stock/')
   const [op, setOp] = useState<string | null>(null)
-  const reload = () => { levels.reload(); moves.reload() }
+  const [whEdit, setWhEdit] = useState<any>(null)
+  const reload = () => { levels.reload(); moves.reload(); warehouses.reload(); consignment.reload() }
   return (
     <>
       <PageHead title="Stock & Moves" sub="Every movement posts to the general ledger at cost."
-        actions={<>{can('inventory.stock.adjust') && <><button onClick={() => setOp('opening')}>Opening stock</button><button onClick={() => setOp('adjust')}>Count adjustment</button></>}{can('inventory.stock.move') && <button onClick={() => setOp('transfer')}>Transfer</button>}</>} />
+        actions={<>{can('inventory.stock.adjust') && <><button onClick={() => setOp('opening')}>Opening stock</button><button onClick={() => setOp('adjust')}>Count adjustment</button></>}{can('inventory.stock.move') && <button onClick={() => setOp('transfer')}>Transfer</button>}{can('inventory.stock.move') && <><button onClick={() => setOp('consignment-receive')}>Consignment in</button><button onClick={() => setOp('consignment-return')}>Consignment out</button></>}</>} />
       {levelsError && <div className="alert bad">{levelsError}</div>}
-      <Tabs tabs={[['levels', 'Stock on hand'], ['moves', 'Movements']]} value={tab} onChange={setTab} />
+      <Tabs tabs={[['levels', 'Stock on hand'], ['moves', 'Movements'], ['warehouses', 'Warehouses'], ['consignment', 'Consignment']]} value={tab} onChange={setTab} />
       <div className="card">
-        {tab === 'levels' ? <DataTable rows={levels.data?.results} cols={[{ key: 'product_sku', title: 'SKU' }, { key: 'product_name', title: 'Product' }, { key: 'warehouse_code', title: 'Warehouse' }, { key: 'quantity', title: 'On hand', num: true, render: (r) => qty(r.quantity) }]} />
-          : <DataTable rows={moves.data?.results} cols={[
+        {tab === 'levels' && <DataTable rows={levels.data?.results} cols={[{ key: 'product_sku', title: 'SKU' }, { key: 'product_name', title: 'Product' }, { key: 'warehouse_code', title: 'Warehouse' }, { key: 'quantity', title: 'On hand', num: true, render: (r) => qty(r.quantity) }]} />}
+        {tab === 'moves' && <DataTable rows={moves.data?.results} cols={[
             { key: 'date', title: 'Date', render: (r) => fmtDate(r.date) }, { key: 'number', title: 'Number', render: (r) => <span className="mono">{r.number}</span> },
             { key: 'move_type', title: 'Type', render: (r) => label(r.move_type) }, { key: 'product_sku', title: 'Product' }, { key: 'warehouse_code', title: 'WH' },
             { key: 'quantity', title: 'Qty', num: true, render: (r) => qty(r.quantity) }, { key: 'unit_cost', title: 'Unit cost', num: true, render: (r) => money(r.unit_cost, undefined, 4) },
             { key: 'value', title: 'Value', num: true, render: (r) => money(r.value) }, { key: 'reference', title: 'Reference' }, { key: 'entry_number', title: 'GL entry', render: (r) => <span className="mono">{r.entry_number || '—'}</span> }]} />}
+        {tab === 'warehouses' && <>
+          {can('inventory.product.manage') && <div className="toolbar"><button className="primary" onClick={() => setWhEdit({})}>+ New warehouse</button></div>}
+          <DataTable rows={warehouses.data} onRow={can('inventory.product.manage') ? setWhEdit : undefined} cols={[
+            { key: 'code', title: 'Code', render: (r) => <span className="mono">{r.code}</span> }, { key: 'name', title: 'Name' },
+            { key: 'is_consignment', title: 'Consignment', render: (r) => r.is_consignment ? `${label(r.consignment_direction)} · ${r.consignment_partner_name || '—'}` : '—' },
+            { key: 'active', title: 'Active', render: (r) => r.active ? 'Yes' : 'No' }]} />
+        </>}
+        {tab === 'consignment' && <>
+          <div className="alert info">Consignment-in stock belongs to the partner, not us -- it is tracked by quantity only and never valued or posted to the GL. The sale or settlement with the consignor is booked separately through a normal invoice or vendor bill. Consignment-out stock (ours, held at a partner's site) is valued and posted exactly like any other warehouse -- use Transfer to move it there.</div>
+          <div className="toolbar"><span style={{ flex: 1 }} /><Export name="consignment-stock" rows={consignment.data || []} cols={[
+            { key: 'warehouse', title: 'Warehouse' }, { key: 'direction', title: 'Direction' }, { key: 'partner', title: 'Partner' },
+            { key: 'product', title: 'SKU' }, { key: 'product_name', title: 'Product' }, { key: 'quantity', title: 'Qty on hand' }]} /></div>
+          <DataTable rows={consignment.data} cols={[
+            { key: 'warehouse', title: 'Warehouse' }, { key: 'direction', title: 'Direction', render: (r) => label(r.direction) },
+            { key: 'partner', title: 'Partner' }, { key: 'product', title: 'SKU' }, { key: 'product_name', title: 'Product' },
+            { key: 'quantity', title: 'Qty on hand', num: true, render: (r) => qty(r.quantity) }]} />
+        </>}
       </div>
       {op && <StockOp op={op} onClose={() => setOp(null)} onDone={() => { setOp(null); reload() }} />}
+      {whEdit && <WarehouseForm initial={whEdit} onClose={() => setWhEdit(null)} onSaved={() => { setWhEdit(null); invalidateOptions(); reload() }} />}
     </>
   )
 }
 
-function StockOp({ op, onClose, onDone }: any) {
-  const [f, setF] = useState<any>({ product: null, warehouse: null, date: today(), quantity: '', counted_qty: '', unit_cost: '', to_warehouse: null, counter_account: null, reason: '' })
+function WarehouseForm({ initial, onClose, onSaved }: any) {
+  const [f, setF] = useState<any>({ code: '', name: '', address: '', active: true, is_consignment: false, consignment_direction: '', consignment_partner: null, ...initial })
   const { run, busy } = useAction()
+  const set = (k: string, v: any) => setF({ ...f, [k]: v })
+  const save = async () => {
+    const { id, consignment_partner_name, ...b } = f; void consignment_partner_name
+    if (!b.is_consignment) { b.consignment_direction = ''; b.consignment_partner = null }
+    const r = await run(() => (id ? patch(`/warehouses/${id}/`, b) : post('/warehouses/', b)), 'Saved')
+    if (r) onSaved()
+  }
+  return (
+    <Modal title={f.id ? f.name : 'New warehouse'} onClose={onClose} footer={<><button onClick={onClose}>Cancel</button><button className="primary" disabled={busy} onClick={save}>Save</button></>}>
+      <div className="grid form">
+        <Field label="Code"><input className="mono" value={f.code} onChange={(e) => set('code', e.target.value)} /></Field>
+        <Field label="Name"><input value={f.name} onChange={(e) => set('name', e.target.value)} /></Field>
+      </div>
+      <Field label="Address"><input value={f.address} onChange={(e) => set('address', e.target.value)} /></Field>
+      <label className="check"><input type="checkbox" checked={f.active} onChange={(e) => set('active', e.target.checked)} />Active</label>
+      <label className="check"><input type="checkbox" checked={f.is_consignment} onChange={(e) => set('is_consignment', e.target.checked)} />Consignment warehouse</label>
+      {f.is_consignment && <div className="grid form">
+        <Field label="Direction" hint="'In' = a partner's goods held here, we don't own them. 'Out' = our own goods held at the partner's site.">
+          <select value={f.consignment_direction} onChange={(e) => set('consignment_direction', e.target.value)}>
+            <option value="">Select…</option>
+            <option value="in">In — held here, owned by the partner</option>
+            <option value="out">Out — held by the partner, owned by us</option>
+          </select>
+        </Field>
+        <Field label="Partner"><PartnerSelect value={f.consignment_partner} onChange={(v) => set('consignment_partner', v)} /></Field>
+      </div>}
+    </Modal>
+  )
+}
+
+function StockOp({ op, onClose, onDone }: any) {
+  const isConsignment = op === 'consignment-receive' || op === 'consignment-return'
+  const [f, setF] = useState<any>({ product: null, warehouse: null, date: today(), quantity: '', counted_qty: '', unit_cost: '', to_warehouse: null, counter_account: null, partner: null, reason: '' })
+  const { run, busy } = useAction()
+  const toast = useToast()
   const set = (k: string, v: any) => setF({ ...f, [k]: v })
   const go = async () => {
     const b = Object.fromEntries(Object.entries(f).filter(([, v]) => v !== '' && v !== null))
-    if (await run(() => post(`/stock-moves/${op}/`, b), 'Done')) onDone()
+    const r = await run(() => post(`/stock-moves/${op}/`, b))
+    if (r) {
+      if (r.pending_approval) toast('Submitted for approval', 'ok')
+      else toast('Done', 'ok')
+      onDone()
+    }
   }
-  const title = { opening: 'Opening stock', adjust: 'Inventory count adjustment', transfer: 'Warehouse transfer' }[op as string]
+  const title = { opening: 'Opening stock', adjust: 'Inventory count adjustment', transfer: 'Warehouse transfer',
+    'consignment-receive': 'Consignment in — goods received', 'consignment-return': 'Consignment in — goods sold/returned' }[op as string]
   return (
     <Modal title={title} onClose={onClose} footer={<><button onClick={onClose}>Cancel</button><button className="primary" disabled={busy} onClick={go}>Validate</button></>}>
+      {isConsignment && <div className="alert info">Quantity only — this never affects valuation or the general ledger, since the goods belong to the partner, not us.</div>}
       <Field label="Product"><ProductSelect value={f.product} onChange={(v) => set('product', v)} /></Field>
       <div className="grid form">
-        <Field label={op === 'transfer' ? 'From warehouse' : 'Warehouse'}><WarehouseSelect value={f.warehouse} onChange={(v) => set('warehouse', v)} /></Field>
+        {isConsignment
+          ? <Field label="Consignment warehouse"><SimpleSelect allowEmpty={false} path="/warehouses/" query={{ is_consignment: true, consignment_direction: 'in' }} labelOf={(w: any) => `${w.code} · ${w.name}`} value={f.warehouse} onChange={(v) => set('warehouse', v)} /></Field>
+          : <Field label={op === 'transfer' ? 'From warehouse' : 'Warehouse'}><WarehouseSelect value={f.warehouse} onChange={(v) => set('warehouse', v)} /></Field>}
         {op === 'transfer' && <Field label="To warehouse"><WarehouseSelect value={f.to_warehouse} onChange={(v) => set('to_warehouse', v)} /></Field>}
         <Field label="Date"><input type="date" value={f.date} onChange={(e) => set('date', e.target.value)} /></Field>
         {op === 'adjust' ? <Field label="Counted quantity" hint="The system posts the difference"><input className="num" value={f.counted_qty} onChange={(e) => set('counted_qty', e.target.value)} /></Field>
           : <Field label="Quantity"><input className="num" value={f.quantity} onChange={(e) => set('quantity', e.target.value)} /></Field>}
-        {op !== 'transfer' && <Field label="Unit cost" hint={op === 'adjust' ? 'Gains only; empty = current average' : undefined}><input className="num" value={f.unit_cost} onChange={(e) => set('unit_cost', e.target.value)} /></Field>}
+        {op !== 'transfer' && !isConsignment && <Field label="Unit cost" hint={op === 'adjust' ? 'Gains only; empty = current average' : undefined}><input className="num" value={f.unit_cost} onChange={(e) => set('unit_cost', e.target.value)} /></Field>}
+        {isConsignment && <Field label="Partner" hint="Defaults to the warehouse's consignment partner"><PartnerSelect allowEmpty value={f.partner} onChange={(v) => set('partner', v)} /></Field>}
       </div>
       {op === 'opening' && <Field label="Offset account" hint="Usually Opening Balance Equity"><AccountSelect value={f.counter_account} onChange={(v) => set('counter_account', v)} filter={(a) => a.account_class === 'equity'} /></Field>}
       <Field label="Reason / reference"><input value={f.reason} onChange={(e) => set('reason', e.target.value)} /></Field>

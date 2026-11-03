@@ -16,8 +16,10 @@ const MODULE_BY_PATH: Record<string, string> = {
   '/purchase-orders': 'purchasing', '/bills': 'billing', '/vendor-payments': 'billing', '/vendors': 'partners',
   '/products': 'inventory', '/stock': 'inventory', '/landed-costs': 'inventory',
   '/users': 'iam', '/integrations': 'integrations', '/audit': 'core', '/assets': 'assets', '/banking': 'banking',
-  '/cheques': 'billing', '/eta': 'einvoice', '/manufacturing': 'manufacturing', '/budgets': 'planning',
+  '/cheques': 'billing', '/cheque-instalment-plans': 'billing', '/guarantee-cheques': 'billing',
+  '/eta': 'einvoice', '/manufacturing': 'manufacturing', '/budgets': 'planning',
   '/recurring': 'planning', '/company-provisioning': 'core', '/company-approvals': 'core', '/team-activity': 'iam',
+  '/group-reports': 'ledger',
 }
 const NAV: [string, Item[]][] = [
   ['Overview', [
@@ -40,6 +42,8 @@ const NAV: [string, Item[]][] = [
   ['Treasury', [
     { to: '/banking', label: 'Bank Reconciliation', ico: '⌂', perm: 'banking.statement.view' },
     { to: '/cheques', label: 'Cheques', ico: '✎', perm: 'billing.payment.view' },
+    { to: '/cheque-instalment-plans', label: 'Instalment Cheque Plans', ico: '▥', perm: 'billing.payment.view' },
+    { to: '/guarantee-cheques', label: 'Guarantee Cheques', ico: '◈', perm: 'billing.payment.view' },
   ]],
   ['Receivables', [
     { to: '/sales-orders', label: 'Sales Orders', ico: '↗', perm: 'sales.order.view' },
@@ -75,6 +79,8 @@ const NAV: [string, Item[]][] = [
     { to: '/company-provisioning', label: 'Company Provisioning', ico: '⬒', globalPerm: 'company.create' },
     { to: '/company-approvals', label: 'Company Approvals', ico: '⎆', globalPerm: 'company.activate' },
     { to: '/team-activity', label: 'Team Activity', ico: '◉', globalPerm: 'presence.view_team' },
+    { to: '/group-reports', label: 'Group Reports', ico: '⊕', globalPerm: ['report.intercompany', 'report.consolidated'] },
+    { to: '/backups', label: 'Backups', ico: '⛁', globalPerm: 'ops.backup.manage' },
   ]],
 ]
 

@@ -3,7 +3,7 @@ from rest_framework import serializers
 from apps.core.serializers_base import CompanyScopedSerializer, DocumentSerializer
 
 from . import services
-from .models import Allocation, Invoice, InvoiceLine, Payment
+from .models import Allocation, ChequeInstalmentPlan, GuaranteeCheque, Invoice, InvoiceLine, Payment
 
 
 class InvoiceLineSerializer(CompanyScopedSerializer):
@@ -111,15 +111,18 @@ class PaymentSerializer(CompanyScopedSerializer):
     journal_code = serializers.CharField(source="journal.code", read_only=True)
     entry_number = serializers.CharField(source="journal_entry.number", read_only=True, default=None)
     allocations = AllocationSerializer(many=True, read_only=True)
+    cheque_endorsed_to_name = serializers.CharField(source="cheque_endorsed_to.name", read_only=True, default=None)
 
     class Meta:
         model = Payment
         fields = ["id", "direction", "number", "partner", "partner_name", "journal", "journal_code", "date",
                   "amount", "currency", "rate", "reference", "memo", "state", "amount_unallocated", "journal_entry",
                   "entry_number", "posted_at", "allocations", "method", "cheque_number", "cheque_bank",
-                  "cheque_due_date", "cheque_state", "cheque_cleared_entry"]
+                  "cheque_due_date", "cheque_state", "cheque_cleared_entry", "cheque_endorsed_to",
+                  "cheque_endorsed_to_name", "cheque_endorsed_entry", "instalment_plan"]
         read_only_fields = ["number", "state", "amount_unallocated", "journal_entry", "posted_at", "cheque_state",
-                            "cheque_cleared_entry"]
+                            "cheque_cleared_entry", "cheque_endorsed_to", "cheque_endorsed_entry",
+                            "instalment_plan"]
         extra_kwargs = {"rate": {"required": False}}
 
     def validate(self, attrs):
@@ -132,3 +135,37 @@ class PaymentSerializer(CompanyScopedSerializer):
         if j and j.type not in ("bank", "cash"):
             raise serializers.ValidationError({"journal": "Choose a bank or cash journal."})
         return attrs
+
+
+class ChequeInstalmentPlanSerializer(CompanyScopedSerializer):
+    partner_name = serializers.CharField(source="partner.name", read_only=True)
+    journal_code = serializers.CharField(source="journal.code", read_only=True)
+    invoice_number = serializers.CharField(source="invoice.number", read_only=True, default=None)
+    cheque_count = serializers.IntegerField(source="cheques.count", read_only=True)
+
+    class Meta:
+        model = ChequeInstalmentPlan
+        fields = ["id", "direction", "partner", "partner_name", "journal", "journal_code", "invoice",
+                  "invoice_number", "description", "currency", "total_amount", "first_due_date",
+                  "number_of_instalments", "frequency_months", "state", "cheque_count"]
+        read_only_fields = ["state"]
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if self.instance and self.instance.state != "draft":
+            raise serializers.ValidationError("This plan has already been generated.")
+        if attrs.get("total_amount") is not None and attrs["total_amount"] <= 0:
+            raise serializers.ValidationError({"total_amount": "Amount must be positive."})
+        if attrs.get("number_of_instalments") is not None and attrs["number_of_instalments"] < 1:
+            raise serializers.ValidationError({"number_of_instalments": "At least one instalment is required."})
+        return attrs
+
+
+class GuaranteeChequeSerializer(CompanyScopedSerializer):
+    partner_name = serializers.CharField(source="partner.name", read_only=True)
+
+    class Meta:
+        model = GuaranteeCheque
+        fields = ["id", "direction", "partner", "partner_name", "cheque_number", "bank", "amount", "currency",
+                  "due_date", "reason", "received_date", "state", "returned_date", "notes"]
+        read_only_fields = ["state", "returned_date"]

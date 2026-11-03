@@ -12,6 +12,14 @@ class CurrencySerializer(serializers.ModelSerializer):
         fields = ["code", "name", "symbol", "decimals", "active"]
 
 
+class CompanyLiteSerializer(serializers.ModelSerializer):
+    """Minimal, non-financial projection of Company -- just enough to pick one as the
+    Partner.linked_company for an intercompany partner record. See CompanyLiteViewSet."""
+    class Meta:
+        model = Company
+        fields = ["id", "code", "name", "name_ar"]
+
+
 class CompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = Company

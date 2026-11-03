@@ -28,7 +28,8 @@ class AccountSerializer(CompanyScopedSerializer):
 class JournalSerializer(CompanyScopedSerializer):
     class Meta:
         model = Journal
-        fields = ["id", "code", "name", "type", "default_account", "currency", "allow_manual", "active"]
+        fields = ["id", "code", "name", "type", "default_account", "currency", "allow_manual",
+                  "is_imprest", "imprest_amount", "active"]
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -37,6 +38,9 @@ class JournalSerializer(CompanyScopedSerializer):
         if t in ("bank", "cash"):
             if not acc or acc.account_type != t:
                 raise serializers.ValidationError({"default_account": f"A {t} journal needs a {t}-type account."})
+        is_imprest = attrs.get("is_imprest", getattr(self.instance, "is_imprest", False))
+        if is_imprest and t != "cash":
+            raise serializers.ValidationError({"is_imprest": "Only cash journals can be an imprest fund."})
         return attrs
 
 

@@ -153,6 +153,10 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 MEDIA_ROOT = Path(env("ERP_MEDIA_ROOT", str(BASE_DIR / "media")))
+# Shared with the separate `backup` container (see docker-compose.yml's backup_ctl volume and
+# BackupView in apps/core/views.py) -- just small request/status JSON files, never the database
+# credentials, the GPG passphrase, or the encrypted backup files themselves.
+BACKUP_CTL_DIR = env("ERP_BACKUP_CTL_DIR", str(BASE_DIR / "backup_ctl"))
 ERP_MAX_UPLOAD_MB = int(env("ERP_MAX_UPLOAD_MB", "10"))
 STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

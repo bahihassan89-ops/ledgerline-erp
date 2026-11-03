@@ -18,12 +18,14 @@ import Banking from './pages/Banking'
 import Eta from './pages/Eta'
 import { LandedCosts } from './pages/Inventory'
 import Manufacturing from './pages/Manufacturing'
-import { Cheques } from './pages/Payments'
+import { Cheques, ChequeInstalmentPlans, GuaranteeCheques } from './pages/Payments'
 import { CloseChecklist, Imports, Revaluation } from './pages/PeriodEnd'
 import { Budgets, Recurring } from './pages/Planning'
 import Print from './pages/Print'
 import { CompanyApprovals, CompanyProvisioning } from './pages/Company'
 import TeamActivity from './pages/TeamActivity'
+import GroupReports from './pages/GroupReports'
+import Backups from './pages/Backups'
 
 function Routed() {
   const { me, loading, can } = useAuth()
@@ -71,6 +73,8 @@ function Routed() {
         <Route path="/assets" element={<Assets />} />
         <Route path="/banking" element={<Banking />} />
         <Route path="/cheques" element={<Cheques />} />
+        <Route path="/cheque-instalment-plans" element={<ChequeInstalmentPlans />} />
+        <Route path="/guarantee-cheques" element={<GuaranteeCheques />} />
         <Route path="/eta" element={<Eta />} />
         <Route path="/manufacturing" element={<Manufacturing />} />
         <Route path="/landed-costs" element={<LandedCosts />} />
@@ -82,6 +86,8 @@ function Routed() {
         <Route path="/company-provisioning" element={<CompanyProvisioning />} />
         <Route path="/company-approvals" element={<CompanyApprovals />} />
         <Route path="/team-activity" element={<TeamActivity />} />
+        <Route path="/group-reports" element={<GroupReports />} />
+        <Route path="/backups" element={<Backups />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Layout>

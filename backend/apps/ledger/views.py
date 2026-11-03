@@ -15,7 +15,7 @@ from apps.approvals.services import ensure_approved
 from apps.core.api import CompanyReadOnlyViewSet, CompanyViewSet
 from apps.core.exceptions import BusinessError
 from apps.core.models import Branch
-from apps.iam.access import ErpPermission, has_perm, require, resolve_company
+from apps.iam.access import ErpPermission, GlobalPermission, has_perm, require, require_global, resolve_company
 
 from . import reports, services
 from .models import (Account, EntryState, FiscalPeriod, FiscalYear, Journal, JournalEntry, JournalLine, PeriodState,
@@ -304,6 +304,47 @@ class ReportView(APIView):
         if name == "cheques":
             from apps.billing.services import cheque_register
             return Response(cheque_register(company, q.get("direction"), q.get("state")))
+        if name == "guarantee-cheques":
+            from apps.billing.services import guarantee_cheque_register
+            return Response(guarantee_cheque_register(company, q.get("direction"), q.get("state")))
+        if name == "consignment-stock":
+            require(request, "inventory.stock.view")
+            from apps.inventory.services import consignment_register
+            return Response(consignment_register(company, q.get("direction")))
+        if name == "liquidity":
+            horizon = int(q["horizon_days"]) if q.get("horizon_days", "").isdigit() else 30
+            return Response(reports.liquidity_view(company, parse_date(q.get("as_of"), today, "as_of"), horizon))
+        if name == "ecl-receivables":
+            from apps.billing.services import ecl_aged_receivables
+            return Response(ecl_aged_receivables(company, parse_date(q.get("as_of"), today, "as_of")))
+        if name == "petty-cash":
+            return Response(reports.petty_cash_register(company, parse_date(q.get("as_of"), today, "as_of")))
+        raise drf_serializers.ValidationError({"report": "Unknown report."})
+
+
+class GlobalReportView(APIView):
+    """GET /api/global-reports/<name>/ -- cross-company reports for central roles (CEO, Central
+    Financial Controller, Central Accounting Manager; see GLOBAL_CATALOG: report.intercompany,
+    report.consolidated). Unlike ReportView these aren't scoped by X-Company -- they look across
+    every company in the install."""
+    permission_classes = [GlobalPermission]
+    global_perms = {"get": ["report.intercompany", "report.consolidated"]}
+
+    def get(self, request, name):
+        from apps.core.models import Company, CompanyState
+        q = request.query_params
+        today = timezone.localdate()
+        as_of = parse_date(q.get("as_of"), today, "as_of")
+        if name == "intercompany-reconciliation":
+            require_global(request, "report.intercompany")
+            return Response(reports.intercompany_reconciliation(as_of))
+        if name == "consolidated":
+            require_global(request, "report.consolidated")
+            level = int(q["level"]) if q.get("level", "").isdigit() else None
+            dfrom = parse_date(q.get("date_from"), date(today.year, 1, 1), "date_from")
+            dto = parse_date(q.get("date_to"), today, "date_to")
+            companies = Company.objects.filter(state=CompanyState.ACTIVE)
+            return Response(reports.consolidated_trial_balance(companies, dfrom, dto, max_level=level))
         raise drf_serializers.ValidationError({"report": "Unknown report."})
 
 

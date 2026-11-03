@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useState, type ReactNode } from 'react'
-import { money } from '../lib/format'
+import { download, exportXlsx, money, toCSV } from '../lib/format'
 
 // ---------------- toasts ----------------
 type Toast = { id: number; text: string; kind?: 'ok' | 'bad' | '' }
@@ -88,4 +88,21 @@ export function Tabs({ tabs, value, onChange }: { tabs: [string, string][]; valu
 
 export function Confirm({ text, onYes, children, className }: { text: string; onYes: () => void; children: ReactNode; className?: string }) {
   return <button className={className} onClick={() => { if (window.confirm(text)) onYes() }}>{children}</button>
+}
+
+/** CSV + genuine Excel export buttons for any report/register that already has a cols/rows pair
+ * (the same shape used by toCSV). Shared by Reports.tsx and every other register that lists data
+ * (cheques, guarantee cheques, instalment plans, consignment, etc.) so none of them need their own
+ * export plumbing. */
+export function Export({ name, rows, cols }: { name: string; rows: Record<string, any>[]; cols: { key: string; title: string }[] }) {
+  const toast = useToast()
+  const [busy, setBusy] = useState(false)
+  const xlsx = async () => {
+    setBusy(true)
+    try { await exportXlsx(name, rows, cols) } catch (e: any) { toast(e.message || 'Export failed', 'bad') } finally { setBusy(false) }
+  }
+  return <span className="row" style={{ gap: 6 }}>
+    <button className="sm" onClick={() => download(`${name}.csv`, toCSV(rows, cols))}>Export CSV</button>
+    <button className="sm" disabled={busy} onClick={xlsx}>Export Excel</button>
+  </span>
 }

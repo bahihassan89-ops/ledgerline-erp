@@ -6,19 +6,20 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from rest_framework.routers import DefaultRouter
 
 from apps.approvals.views import ApprovalRequestViewSet, ApprovalRuleViewSet
-from apps.billing.views import CustomerInvoiceViewSet, PaymentViewSet, VendorBillViewSet
-from apps.core.views import (AuditLogViewSet, BranchViewSet, CompanyApprovalViewSet, CompanyProvisioningViewSet,
-                             CompanyViewSetCurrent, CostCenterViewSet, CurrencyViewSet, ExchangeRateViewSet,
-                             NotificationViewSet, PushSubscriptionViewSet)
+from apps.billing.views import (ChequeInstalmentPlanViewSet, CustomerInvoiceViewSet, GuaranteeChequeViewSet,
+                                PaymentViewSet, VendorBillViewSet)
+from apps.core.views import (AuditLogViewSet, BackupView, BranchViewSet, CompanyApprovalViewSet, CompanyLiteViewSet,
+                             CompanyProvisioningViewSet, CompanyViewSetCurrent, CostCenterViewSet, CurrencyViewSet,
+                             ExchangeRateViewSet, ExportXlsxView, NotificationViewSet, PushSubscriptionViewSet)
 from apps.iam import auth_views
 from apps.iam.views import (GlobalPermissionCatalogView, GlobalRoleViewSet, HeartbeatView, PermissionCatalogView,
                             RoleViewSet, TeamActivityViewSet, UserViewSet)
 from apps.integrations.views import ApiKeyViewSet, WebhookDeliveryViewSet, WebhookViewSet
-from apps.inventory.views import (LotViewSet, ProductCategoryViewSet, ProductViewSet, SerialNumberViewSet,
-                                  StockMoveViewSet, StockQuantViewSet, WarehouseViewSet)
+from apps.inventory.views import (InventoryCountViewSet, LotViewSet, ProductCategoryViewSet, ProductViewSet,
+                                  SerialNumberViewSet, StockMoveViewSet, StockQuantViewSet, WarehouseViewSet)
 from apps.ledger.dashboard import DashboardView
 from apps.ledger.views import (AccountingSettingsView, AccountViewSet, FiscalPeriodViewSet, FiscalYearViewSet,
-                               JournalEntryViewSet, JournalViewSet, ReportView, TaxViewSet)
+                               GlobalReportView, JournalEntryViewSet, JournalViewSet, ReportView, TaxViewSet)
 from apps.partners.views import PartnerViewSet, PaymentTermViewSet
 from apps.purchasing.views import PurchaseOrderViewSet
 from apps.sales.views import SalesOrderViewSet
@@ -35,6 +36,7 @@ from apps.planning.api import BudgetViewSet, RecurringViewSet
 r = DefaultRouter()
 r.register("currencies", CurrencyViewSet, basename="currency")
 r.register("company", CompanyViewSetCurrent, basename="company")
+r.register("companies", CompanyLiteViewSet, basename="company-lite")
 r.register("exchange-rates", ExchangeRateViewSet)
 r.register("cost-centers", CostCenterViewSet)
 r.register("branches", BranchViewSet)
@@ -54,10 +56,13 @@ r.register("products", ProductViewSet)
 r.register("warehouses", WarehouseViewSet)
 r.register("stock-moves", StockMoveViewSet)
 r.register("stock-levels", StockQuantViewSet)
+r.register("inventory-counts", InventoryCountViewSet)
 r.register("lots", LotViewSet)
 r.register("invoices", CustomerInvoiceViewSet, basename="invoice")
 r.register("bills", VendorBillViewSet, basename="bill")
 r.register("payments", PaymentViewSet)
+r.register("cheque-instalment-plans", ChequeInstalmentPlanViewSet)
+r.register("guarantee-cheques", GuaranteeChequeViewSet)
 r.register("sales-orders", SalesOrderViewSet)
 r.register("purchase-orders", PurchaseOrderViewSet)
 r.register("approval-rules", ApprovalRuleViewSet)
@@ -103,8 +108,11 @@ urlpatterns = [
     path("api/permissions/", PermissionCatalogView.as_view()),
     path("api/global-permissions/", GlobalPermissionCatalogView.as_view()),
     path("api/presence/heartbeat/", HeartbeatView.as_view()),
+    path("api/ops/backup/", BackupView.as_view()),
     path("api/push/public-key/", lambda request: JsonResponse({"key": settings.WEBPUSH_PUBLIC_KEY})),
     path("api/reports/<slug:name>/", ReportView.as_view()),
+    path("api/global-reports/<slug:name>/", GlobalReportView.as_view()),
+    path("api/export/xlsx/", ExportXlsxView.as_view()),
     path("api/eta-settings/", EtaSettingsView.as_view()),
     path("api/close-checklist/", ChecklistView.as_view()),
     path("api/fx-revaluation/", RevaluationView.as_view()),

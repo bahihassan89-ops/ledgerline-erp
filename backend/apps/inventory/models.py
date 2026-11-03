@@ -94,12 +94,33 @@ class Product(CompanyScoped):
         return acc or getattr(self.category, f"{kind}_account", None)
 
 
+class ConsignmentDirection(models.TextChoices):
+    IN = "in", "Held here, owned by the partner (consignment-in)"
+    OUT = "out", "Held by the partner, owned by us (consignment-out)"
+
+
 @audited
 class Warehouse(CompanyScoped):
+    """A `consignment` warehouse represents stock that isn't a plain company-owned location, per
+    the FC review comment on consignment tracking:
+    - `out`: our own goods sitting at a partner's premises (a consignee/agent selling on our
+      behalf). We still own them, so the normal receive/issue/transfer/valuation machinery applies
+      unchanged -- just move stock here with inventory.services.transfer() and sell from here with
+      the normal sales-delivery flow, exactly like any other warehouse.
+    - `in`: a partner's goods sitting at our premises (we are the consignee). We never own this
+      stock, so it must never touch our valuation or post to the GL -- see
+      inventory.services.consignment_receive/consignment_return, which track quantity only.
+      Ordinary receive()/issue()/transfer() refuse to touch an `in` warehouse (see services._check)."""
     code = models.CharField(max_length=10)
     name = models.CharField(max_length=120)
     address = models.TextField(blank=True)
     active = models.BooleanField(default=True)
+    is_consignment = models.BooleanField(default=False)
+    consignment_direction = models.CharField(max_length=3, blank=True, choices=ConsignmentDirection.choices)
+    consignment_partner = models.ForeignKey("partners.Partner", null=True, blank=True, on_delete=models.PROTECT,
+                                            related_name="consignment_warehouses",
+                                            help_text="Who the consigned stock belongs to ('in') or is held by "
+                                                      "('out').")
 
     class Meta:
         unique_together = [("company", "code")]
@@ -192,10 +213,12 @@ class MoveType(models.TextChoices):
     TRANSFER_OUT = "transfer_out", "Transfer out"
     PRODUCTION_CONSUME = "production_consume", "Consumed in production"
     PRODUCTION_OUTPUT = "production_output", "Produced (finished goods)"
+    CONSIGN_IN = "consign_in", "Received on consignment (not owned)"
+    CONSIGN_OUT = "consign_out", "Sold or returned from consignment"
 
 
 INBOUND = {MoveType.RECEIPT, MoveType.ADJUST_IN, MoveType.CUSTOMER_RETURN, MoveType.OPENING, MoveType.TRANSFER_IN,
-           MoveType.PRODUCTION_OUTPUT}
+           MoveType.PRODUCTION_OUTPUT, MoveType.CONSIGN_IN}
 
 
 class StockMove(CompanyScoped):
@@ -259,6 +282,32 @@ class CostLayer(models.Model):
     class Meta:
         ordering = ["date", "id"]
         constraints = [models.CheckConstraint(condition=Q(remaining_qty__gte=0), name="layer_remaining_non_negative")]
+
+
+@audited
+class InventoryCount(CompanyScoped):
+    """A physical count of `product` at `warehouse`. Large adjustments (per an ApprovalRule for
+    document_type='inventory_count') must be approved before the system books the variance -- see
+    inventory.services.apply_count. Small/no-rule adjustments are applied immediately, same as before."""
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="counts")
+    product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="counts")
+    date = models.DateField()
+    counted_qty = models.DecimalField(**QTY)
+    unit_cost = models.DecimalField(max_digits=20, decimal_places=6, null=True, blank=True,
+                                     help_text="Gains only; empty = current average cost")
+    reason = models.CharField(max_length=200, blank=True)
+    state = models.CharField(max_length=10, default="draft", choices=[
+        ("draft", "Draft"), ("to_approve", "Waiting approval"), ("approved", "Approved"), ("done", "Done"),
+        ("cancelled", "Cancelled")])
+    diff_qty = models.DecimalField(**QTY, null=True, blank=True, help_text="Counted minus on-hand, once computed")
+    value = models.DecimalField(**MONEY, null=True, blank=True, help_text="Absolute value of the variance")
+    move = models.ForeignKey(StockMove, null=True, blank=True, on_delete=models.PROTECT, related_name="+")
+
+    class Meta:
+        ordering = ["-date", "-id"]
+
+    def __str__(self):
+        return f"Count {self.product.sku} @ {self.warehouse.code} ({self.date})"
 
 
 class LandedCost(CompanyScoped):

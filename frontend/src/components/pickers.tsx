@@ -55,3 +55,5 @@ export const JournalSelect = (p: P & { types?: string[] }) => {
 }
 export const CostCenterSelect = (p: P) =>
   <SimpleSelect {...p} path="/cost-centers/" labelOf={(x) => `${x.code} ${x.name}`} />
+export const CompanySelect = (p: P) =>
+  <SimpleSelect {...p} path="/companies/" labelOf={(c) => `${c.code} · ${c.name}`} />

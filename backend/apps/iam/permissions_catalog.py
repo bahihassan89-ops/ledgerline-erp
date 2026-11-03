@@ -144,11 +144,16 @@ GLOBAL_CATALOG = {
     "company.module.manage": "Enable/disable modules on a company",
     "membership.grant_any_company": "Grant/edit team membership and roles in any company",
     "presence.view_team": "View the team activity / presence portal",
+    "report.intercompany": "View the intercompany reconciliation report across companies",
+    "report.consolidated": "View the consolidated / group financial report across companies",
+    "ops.backup.manage": "Trigger an on-demand backup and view backup status",
 }
 
 GLOBAL_CONTROLLER = ["company.create", "company.submit", "company.module.manage",
-                      "membership.grant_any_company", "presence.view_team"]
-GLOBAL_ACCOUNTING_MANAGER = ["membership.grant_any_company", "presence.view_team"]
+                      "membership.grant_any_company", "presence.view_team",
+                      "report.intercompany", "report.consolidated", "ops.backup.manage"]
+GLOBAL_ACCOUNTING_MANAGER = ["membership.grant_any_company", "presence.view_team",
+                              "report.intercompany", "report.consolidated"]
 GLOBAL_CEO = list(GLOBAL_CATALOG)
 
 # name, level, permissions

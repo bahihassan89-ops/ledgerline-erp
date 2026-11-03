@@ -21,6 +21,11 @@ from apps.core.money import ZERO, D, round_to
 from .models import (PL_CLASSES, Account, AccountingSettings, EntryState, FiscalPeriod, FiscalYear, Journal,
                      JournalEntry, JournalLine, PeriodState)
 
+# Tax control accounts (output/input VAT, WHT payable/receivable): per the FC review, these must only
+# be posted by tax codes (sub-ledger invoices/bills -- always allow_control=True already) or by a
+# manual entry in the dedicated "TAX" (Tax Settlements) journal -- never a free-form general entry.
+TAX_CONTROL_TYPES = {"tax_output", "tax_input", "wht_payable", "wht_receivable"}
+
 
 @dataclass
 class LineSpec:
@@ -251,7 +256,12 @@ def post_entry(entry, user, *, allow_control=False, closing=False) -> JournalEnt
         if not acc.active:
             errors.append(f"{tag}: account is inactive.")
         if acc.is_control and entry.is_manual and not allow_control:
-            errors.append(f"{tag}: '{acc.name}' is a control account; use invoices/payments/stock operations.")
+            if acc.account_type in TAX_CONTROL_TYPES:
+                if entry.journal.code != "TAX":
+                    errors.append(f"{tag}: '{acc.name}' is a tax control account; post it via tax codes on "
+                                  f"invoices/bills, or a manual entry in the Tax Settlements journal.")
+            else:
+                errors.append(f"{tag}: '{acc.name}' is a control account; use invoices/payments/stock operations.")
         if acc.reconcilable and not ln.partner_id:
             errors.append(f"{tag}: a customer/vendor is required on receivable/payable accounts.")
         if acc.requires_cost_center and not ln.cost_center_id:

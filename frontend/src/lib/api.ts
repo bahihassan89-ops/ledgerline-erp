@@ -127,3 +127,28 @@ export async function downloadAuthed(path: string, filename: string) {
   a.click()
   URL.revokeObjectURL(a.href)
 }
+
+/** POST a JSON body and download the response as a file (used for server-generated exports, e.g. Excel). */
+export async function postDownload(path: string, filename: string, body: any) {
+  const doFetch = () => fetch(`/api${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      ...(session.company() ? { 'X-Company': session.company()! } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+  let r = await doFetch()
+  if (r.status === 401 && session.hasRefresh() && await refresh()) r = await doFetch()
+  if (r.status === 401) onUnauthorized()
+  if (!r.ok) {
+    const text = await r.text()
+    throw new ApiError(r.status, text ? JSON.parse(text) : null)
+  }
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(await r.blob())
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(a.href)
+}

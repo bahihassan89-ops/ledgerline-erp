@@ -18,8 +18,8 @@ from apps.ledger import services as gl
 from apps.ledger.models import EntryState
 
 from .calc import apply_totals
-from .models import (CUSTOMER_TYPES, Allocation, DocState, Invoice, InvoiceLine, InvoiceType, Payment,
-                     PaymentState)
+from .models import (CUSTOMER_TYPES, Allocation, ChequeInstalmentPlan, DocState, GuaranteeCheque, Invoice,
+                     InvoiceLine, InvoiceType, Payment, PaymentState)
 
 PREFIX = {InvoiceType.OUT_INVOICE: "INV", InvoiceType.OUT_REFUND: "CN",
           InvoiceType.IN_INVOICE: "BILL", InvoiceType.IN_REFUND: "DN"}
@@ -55,6 +55,17 @@ def recompute(inv):
 
 def _fiscal_year_of(company, on_date):
     return gl.find_period(company, on_date).fiscal_year.start_date.year
+
+
+def _add_months(d, months):
+    """Calendar-month addition with no new dependency: clamps to the last day of the target month
+    (e.g. 31 Jan + 1 month = 28/29 Feb), the usual convention for post-dated instalment cheques."""
+    import calendar
+    total = d.month - 1 + months
+    year = d.year + total // 12
+    month = total % 12 + 1
+    day = min(d.day, calendar.monthrange(year, month)[1])
+    return d.replace(year=year, month=month, day=day)
 
 
 # --------------------------------------------------------------------------- invoices & bills
@@ -498,9 +509,43 @@ def cheque_clear(pay, user, on_date):
 
 
 @transaction.atomic
-def cheque_bounce(pay, user, reason):
-    """Returned unpaid (or a stopped issued cheque): reopen the invoices and reverse the payment."""
-    pay = Payment.objects.select_for_update().get(pk=pay.pk)
+def cheque_endorse(pay, user, to_partner, on_date):
+    """Endorse a received cheque (أوراق قبض) straight to one of our own vendors instead of
+    depositing it: Dr their payable / Cr notes receivable, no cash ever touches our bank. FC
+    review: "add endorsement to third parties"."""
+    pay = Payment.objects.select_for_update().select_related("company", "partner", "journal").get(pk=pay.pk)
+    company = pay.company
+    if pay.method != "cheque" or pay.direction != "inbound" or pay.cheque_state not in ("in_hand", "deposited"):
+        raise BusinessError("Only received cheques in hand or deposited can be endorsed.", "invalid_state")
+    if to_partner.company_id != company.pk:
+        raise BusinessError("That vendor belongs to another company.", "cross_company")
+    if not to_partner.is_vendor:
+        raise BusinessError(f"{to_partner.name} is not a vendor.", "not_vendor")
+    st = gl.settings_for(company)
+    chq = gl.require_account(st.cheques_receivable_account, "cheques receivable")
+    payable = payable_account(company, to_partner)
+    desc = f"Cheque {pay.cheque_number} endorsed to {to_partner.name}"
+    specs = [gl.LineSpec(account=payable, debit=pay.amount, credit=ZERO, partner=to_partner, description=desc),
+             gl.LineSpec(account=chq, debit=ZERO, credit=pay.amount, description=desc)]
+    specs = gl.lines_from_document_amounts(company, pay.rate, specs)
+    e = gl.create_entry(company, pay.journal, on_date, specs, user=user, reference=f"CHQ {pay.cheque_number}",
+                        narration=desc, currency=pay.currency_id, rate=pay.rate, source=("payment", pay.pk))
+    gl.post_entry(e, user, allow_control=True)
+    pay.cheque_state = "endorsed"
+    pay.cheque_endorsed_to = to_partner
+    pay.cheque_endorsed_entry = e
+    pay.save(update_fields=["cheque_state", "cheque_endorsed_to", "cheque_endorsed_entry", "updated_at"])
+    audit.record("cheque_endorse", pay, {"to": to_partner.code, "entry": e.number})
+    return pay
+
+
+@transaction.atomic
+def cheque_bounce(pay, user, reason, fee=None, on_date=None):
+    """Returned unpaid (or a stopped issued cheque): reopen the invoices and reverse the payment.
+    `fee` (optional, FC review: "bounced-cheque fees") books the bank's handling fee: charged back
+    onto the customer's receivable for an inbound bounce, or debited as a bank-charges expense for
+    an outbound one (the bank deducts its fee from our account immediately)."""
+    pay = Payment.objects.select_for_update().select_related("company", "partner", "journal").get(pk=pay.pk)
     if pay.method != "cheque" or pay.cheque_state not in ("in_hand", "deposited", "issued"):
         raise BusinessError("Only uncleared cheques can bounce.", "invalid_state")
     if not reason:
@@ -512,11 +557,37 @@ def cheque_bounce(pay, user, reason):
     pay.cheque_state = "bounced"
     pay.save(update_fields=["cheque_state", "updated_at"])
     audit.record("cheque_bounce", pay, {"reason": reason})
+    if fee:
+        _post_bounce_fee(pay, user, D(fee), on_date or timezone.localdate())
     return pay
 
 
+def _post_bounce_fee(pay, user, fee, on_date):
+    company = pay.company
+    st = gl.settings_for(company)
+    fee_acc = gl.require_account(st.cheque_bounce_fee_account, "cheque bounce fee")
+    desc = f"Bounce fee — cheque {pay.cheque_number} ({pay.partner.name})"
+    if pay.direction == "inbound":
+        # Customer's cheque bounced: charge the bank's fee back onto their receivable balance.
+        ctrl = receivable_account(company, pay.partner)
+        specs = [gl.LineSpec(account=ctrl, debit=fee, credit=ZERO, partner=pay.partner, description=desc),
+                 gl.LineSpec(account=fee_acc, debit=ZERO, credit=fee, description=desc)]
+    else:
+        # Our issued cheque bounced: the bank deducted its own handling fee from our account.
+        specs = [gl.LineSpec(account=fee_acc, debit=fee, credit=ZERO, description=desc),
+                 gl.LineSpec(account=pay.journal.default_account, debit=ZERO, credit=fee, description=desc)]
+    rate = gl.resolve_rate(company, company.base_currency_id, on_date)
+    specs = gl.lines_from_document_amounts(company, rate, specs)
+    e = gl.create_entry(company, pay.journal, on_date, specs, user=user, reference=f"CHQ {pay.cheque_number} FEE",
+                        narration=desc, currency=company.base_currency_id, rate=rate, source=("payment", pay.pk))
+    gl.post_entry(e, user, allow_control=True)
+    audit.record("cheque_bounce_fee", pay, {"fee": str(fee), "entry": e.number})
+    return e
+
+
 def cheque_register(company, direction=None, state=None):
-    qs = Payment.objects.filter(company=company, method="cheque").select_related("partner", "journal")
+    qs = Payment.objects.filter(company=company, method="cheque").select_related("partner", "journal",
+                                                                                  "cheque_endorsed_to")
     if direction:
         qs = qs.filter(direction=direction)
     if state:
@@ -525,10 +596,97 @@ def cheque_register(company, direction=None, state=None):
     rows = [{"id": p.pk, "number": p.number, "direction": p.direction, "partner": p.partner.name,
              "cheque_number": p.cheque_number, "bank": p.cheque_bank, "due_date": p.cheque_due_date,
              "amount": str(p.amount), "currency": p.currency_id, "state": p.cheque_state, "journal": p.journal.code,
+             "endorsed_to": p.cheque_endorsed_to.name if p.cheque_endorsed_to_id else None,
+             "instalment_plan": p.instalment_plan_id,
              "overdue": bool(p.cheque_due_date and p.cheque_due_date < today and
                              p.cheque_state in ("in_hand", "deposited", "issued"))}
             for p in qs.order_by("cheque_due_date")]
     return {"rows": rows}
+
+
+# --------------------------------------------------------------------------- post-dated / instalment cheques
+
+@transaction.atomic
+def generate_instalment_cheques(plan, user, cheque_numbers=None, cheque_bank=""):
+    """Create and post one cheque Payment per instalment of `plan` -- the post-dated cheque
+    schedules our real estate companies use for unit sales/purchases (FC review). All instalments
+    are posted to notes receivable/payable immediately (as if the physical cheques were received
+    at signing); each is then deposited/cleared/bounced/endorsed individually via the normal cheque
+    workflow as its own due date arrives.
+
+    `cheque_numbers`, if given, must have one entry per instalment (the real numbers off the
+    physical post-dated cheques collected at signing); otherwise a placeholder "PDC-<plan>-<n>" is
+    used and should be corrected once the actual cheques are in hand."""
+    plan = ChequeInstalmentPlan.objects.select_for_update().select_related("company", "partner", "journal",
+                                                                           "invoice", "currency").get(pk=plan.pk)
+    if plan.state != "draft":
+        raise BusinessError("This plan has already been generated.", "already_generated")
+    if plan.number_of_instalments < 1:
+        raise BusinessError("Number of instalments must be at least 1.", "invalid_count")
+    if cheque_numbers and len(cheque_numbers) != plan.number_of_instalments:
+        raise BusinessError("Provide one cheque number per instalment, or none at all.", "cheque_numbers_mismatch")
+    company = plan.company
+    n = plan.number_of_instalments
+    decimals = doc_decimals(plan.currency)
+    share = round_to(plan.total_amount / n, decimals)
+    cheques = []
+    for i in range(n):
+        amount = share if i < n - 1 else plan.total_amount - share * (n - 1)  # last absorbs rounding
+        due = _add_months(plan.first_due_date, plan.frequency_months * i)
+        number = cheque_numbers[i] if cheque_numbers else f"PDC-{plan.pk}-{i + 1}"
+        pay = Payment.objects.create(
+            company=company, direction=plan.direction, partner=plan.partner, journal=plan.journal, date=due,
+            amount=amount, currency=plan.currency, method="cheque", cheque_number=number, cheque_bank=cheque_bank,
+            cheque_due_date=due, reference=f"{plan.description or 'Instalment plan'} {i + 1}/{n}",
+            instalment_plan=plan, amount_unallocated=amount, created_by=user)
+        pay = post_payment(pay, user, [(plan.invoice, amount)] if plan.invoice_id else ())
+        cheques.append(pay)
+    plan.state = "generated"
+    plan.save(update_fields=["state", "updated_at"])
+    audit.record("generate_instalment_cheques", plan, {"count": n, "total": str(plan.total_amount)})
+    return cheques
+
+
+# --------------------------------------------------------------------------- guarantee cheques (off balance sheet)
+
+def guarantee_cheque_register(company, direction=None, state=None):
+    qs = GuaranteeCheque.objects.filter(company=company).select_related("partner")
+    if direction:
+        qs = qs.filter(direction=direction)
+    if state:
+        qs = qs.filter(state=state)
+    return {"rows": [{"id": g.pk, "direction": g.direction, "partner": g.partner.name,
+                      "cheque_number": g.cheque_number, "bank": g.bank, "amount": str(g.amount),
+                      "currency": g.currency_id, "due_date": g.due_date, "reason": g.reason,
+                      "received_date": g.received_date, "state": g.state, "returned_date": g.returned_date}
+                     for g in qs.order_by("-received_date")]}
+
+
+@transaction.atomic
+def guarantee_cheque_return(gc, user, on_date=None):
+    gc = GuaranteeCheque.objects.select_for_update().get(pk=gc.pk)
+    if gc.state != "held":
+        raise BusinessError(f"Cannot return a guarantee cheque from state '{gc.state}'.", "invalid_state")
+    gc.state = "returned"
+    gc.returned_date = on_date or timezone.localdate()
+    gc.save(update_fields=["state", "returned_date", "updated_at"])
+    audit.record("guarantee_cheque_return", gc, {"returned_date": str(gc.returned_date)})
+    return gc
+
+
+@transaction.atomic
+def guarantee_cheque_forfeit(gc, user, notes=""):
+    """Marks the guarantee as forfeited. This record itself never touches the GL -- if the money
+    is actually collected or paid as a result, book that separately as a normal cheque/payment or
+    manual journal entry, then record its reference in `notes`."""
+    gc = GuaranteeCheque.objects.select_for_update().get(pk=gc.pk)
+    if gc.state != "held":
+        raise BusinessError(f"Cannot forfeit a guarantee cheque from state '{gc.state}'.", "invalid_state")
+    gc.state = "forfeited"
+    gc.notes = (gc.notes + "\n" + notes).strip() if notes else gc.notes
+    gc.save(update_fields=["state", "notes", "updated_at"])
+    audit.record("guarantee_cheque_forfeit", gc, {"notes": notes})
+    return gc
 
 
 # --------------------------------------------------------------------------- allocation
@@ -724,6 +882,31 @@ def aging(company, kind, as_of):
         return {k: (str(v) if isinstance(v, Decimal) else v) for k, v in r.items()}
     return {"as_of": as_of, "kind": kind, "buckets": [b for b, *_ in BUCKETS], "rows": [s(r) for r in rows],
             "totals": s(totals)}
+
+
+def ecl_aged_receivables(company, as_of):
+    """Expected Credit Loss (ECL) provision: each AR aging bucket x the matching
+    AccountingSettings.ecl_rate_* percentage (AccountingSettingsView/Settings page -- FC to
+    confirm actual rates; they default to 0%, so this returns an all-zero provision until set)."""
+    ag = aging(company, "receivable", as_of)
+    st = gl.settings_for(company)
+    rates = {"current": st.ecl_rate_current, "1_30": st.ecl_rate_1_30, "31_60": st.ecl_rate_31_60,
+             "61_90": st.ecl_rate_61_90, "over_90": st.ecl_rate_over_90}
+    decimals = company.base_currency.decimals
+    rows, total_balance, total_provision = [], ZERO, ZERO
+    for r in ag["rows"]:
+        buckets, provision = {}, ZERO
+        for b, *_ in BUCKETS:
+            bal = D(r[b])
+            prov = round_to(bal * rates[b] / 100, decimals)
+            buckets[b] = {"balance": str(bal), "rate": str(rates[b]), "provision": str(prov)}
+            provision += prov
+        rows.append({"partner_id": r["partner_id"], "partner": r["partner"], "code": r["code"],
+                     "buckets": buckets, "total_balance": r["total"], "total_provision": str(provision)})
+        total_balance += D(r["total"])
+        total_provision += provision
+    return {"as_of": as_of, "rates": {k: str(v) for k, v in rates.items()}, "rows": rows,
+            "total_balance": str(total_balance), "total_provision": str(total_provision)}
 
 
 def subledger_reconciliation(company, as_of):

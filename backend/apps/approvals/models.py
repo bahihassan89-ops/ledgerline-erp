@@ -12,6 +12,7 @@ class DocumentType(models.TextChoices):
     VENDOR_BILL = "vendor_bill", "Vendor bill / debit note"
     PAYMENT = "payment", "Payment"
     JOURNAL_ENTRY = "journal_entry", "Manual journal entry"
+    INVENTORY_COUNT = "inventory_count", "Inventory count adjustment"
 
 
 @audited

@@ -57,6 +57,14 @@ class Partner(CompanyScoped):
     postal_code = models.CharField(max_length=20, blank=True)
     notes = models.TextField(blank=True)
     active = models.BooleanField(default=True)
+    # Intercompany: this partner record actually represents another company in our own group
+    # (e.g. a sibling branch set up as a separate legal entity). Transactions against it are
+    # recorded as ordinary sales/purchases via due-to/due-from control accounts -- no automatic
+    # elimination is performed; see the "Intercompany reconciliation" report.
+    is_intercompany = models.BooleanField(default=False, help_text="This partner is another company in our group")
+    linked_company = models.ForeignKey("core.Company", null=True, blank=True, on_delete=models.SET_NULL,
+                                       related_name="intercompany_partners",
+                                       help_text="The group company this partner record corresponds to")
 
     class Meta:
         unique_together = [("company", "code")]

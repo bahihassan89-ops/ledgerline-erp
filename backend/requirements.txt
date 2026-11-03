@@ -7,6 +7,7 @@ djangorestframework==3.18.3
 djangorestframework_simplejwt==5.5.1
 drf-spectacular==0.30.0
 gunicorn==26.2.0
+openpyxl==3.1.5
 psycopg==3.3.6
 psycopg-binary==3.3.6
 PyOTP==2.10.0

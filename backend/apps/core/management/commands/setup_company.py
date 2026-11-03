@@ -36,37 +36,60 @@ JOURNALS = [
     ("DEP", "Depreciation", "general", None, False),
     ("OPN", "Opening Balances", "general", None, True),
     ("CLS", "Year-End Closing", "general", None, False),
+    # Dedicated manual journal for VAT/withholding settlement and remittance entries. Tax control
+    # accounts (output/input VAT, WHT payable/receivable) only accept postings from tax codes
+    # (sub-ledger invoices/bills) or from this journal -- never from a free-form general entry.
+    ("TAX", "Tax Settlements", "general", None, True),
 ]
 
 # Egypt (Law 67/2016 VAT; Income Tax Law 91/2005 art. 59 & Ministerial Decree 405/2018 withholding).
 # (code, name, name_ar, scope, kind, rate, eta_type, eta_subtype, account, min_base)
 EGYPT_TAXES = [
     ("VAT14-S", "VAT 14% (sales)", "ضريبة القيمة المضافة 14% مبيعات", "sale", "vat", 14, "T1", "V009", "210301", 0),
-    ("VAT5-S", "VAT 5% machinery & equipment (sales)", "ضريبة قيمة مضافة 5% آلات ومعدات", "sale", "vat", 5, "T1",
+    # VAT 5% scope updated per Law 149/2026 (eff. 29 Jul 2026, Official Gazette 30 bis (A)): machinery,
+    # equipment and medical devices used in production (excludes buses and passenger cars). Executive
+    # regulations not yet issued as of 28 Oct 2026 -- confirm wording with the tax advisor at go-live.
+    ("VAT5-S", "VAT 5% machinery, equipment & medical devices (production use; sales)",
+     "ضريبة قيمة مضافة 5% آلات ومعدات وأجهزة طبية (بغرض الإنتاج) - مبيعات", "sale", "vat", 5, "T1",
      "V010", "210301", 0),
     ("VAT0-EXP", "Zero-rated export", "تصدير — سعر صفر", "sale", "vat", 0, "T1", "V001", "210301", 0),
     ("VAT-EX-S", "Exempt supply (sales)", "سلعة / خدمة معفاة", "sale", "vat", 0, "T1", "V003", "210301", 0),
     ("VAT14-P", "VAT 14% (purchases)", "ضريبة القيمة المضافة 14% مشتريات", "purchase", "vat", 14, "T1", "V009",
      "110403", 0),
-    ("VAT5-P", "VAT 5% machinery & equipment (purchases)", "ضريبة قيمة مضافة 5% مشتريات آلات", "purchase", "vat",
+    ("VAT5-P", "VAT 5% machinery, equipment & medical devices (production use; purchases)",
+     "ضريبة قيمة مضافة 5% آلات ومعدات وأجهزة طبية (بغرض الإنتاج) - مشتريات", "purchase", "vat",
      5, "T1", "V010", "110403", 0),
     ("VAT-EX-P", "Exempt / non-taxable purchase", "مشتريات معفاة", "purchase", "vat", 0, "T1", "V003", "110403", 0),
-    # Withholding we deduct from vendors (we pay it to the Tax Authority with Form 41)
+    # Withholding we deduct from vendors (we pay it to the Tax Authority with Form 41).
+    # ETA subtypes confirmed against the official code table by the Financial Controller (Oct 2026):
+    # W001/W002/W004 confirmed as-is; W011 was wrong for the 5% commission rate (W011 is Art. 57) and
+    # has been corrected to W006; W003 (1% purchases of goods) and W010 (5% professional fees, Art. 70)
+    # were missing and have been added. A separate 2%/5% "company-specific" category and the
+    # non-resident 20% rule were also flagged by the FC but no rate/ETA code was supplied for either --
+    # do not add those without the tax advisor's written confirmation of the exact rate and code.
     ("WHT1-CON-P", "WHT 1% contracting", "خصم وإضافة 1% مقاولات", "purchase", "withholding", 1, "T4", "W001",
      "210304", 300),
     ("WHT1-SUP-P", "WHT 1% supplies & purchases", "خصم وإضافة 1% توريدات ومشتريات", "purchase", "withholding", 1,
      "T4", "W002", "210304", 300),
+    ("WHT1-GDS-P", "WHT 1% purchases of goods", "خصم وإضافة 1% مشتريات بضائع", "purchase", "withholding", 1,
+     "T4", "W003", "210304", 300),
     ("WHT3-SRV-P", "WHT 3% services", "خصم وإضافة 3% خدمات", "purchase", "withholding", 3, "T4", "W004",
      "210304", 300),
     ("WHT5-COM-P", "WHT 5% commissions & brokerage", "خصم وإضافة 5% عمولات وسمسرة", "purchase", "withholding", 5,
-     "T4", "W011", "210304", 300),
+     "T4", "W006", "210304", 300),
+    ("WHT5-PRF-P", "WHT 5% professional fees", "خصم وإضافة 5% أتعاب مهنية", "purchase", "withholding", 5,
+     "T4", "W010", "210304", 300),
     # Withholding our customers deduct from our invoices (credit against our income tax)
     ("WHT1-SUP-S", "WHT 1% supplies (deducted by customer)", "خصم وإضافة 1% توريدات (لدى العميل)", "sale",
      "withholding", 1, "T4", "W002", "110206", 300),
+    ("WHT1-GDS-S", "WHT 1% purchases of goods (deducted by customer)", "خصم وإضافة 1% مشتريات بضائع (لدى العميل)",
+     "sale", "withholding", 1, "T4", "W003", "110206", 300),
     ("WHT3-SRV-S", "WHT 3% services (deducted by customer)", "خصم وإضافة 3% خدمات (لدى العميل)", "sale",
      "withholding", 3, "T4", "W004", "110206", 300),
     ("WHT5-COM-S", "WHT 5% commissions (deducted by customer)", "خصم وإضافة 5% عمولات (لدى العميل)", "sale",
-     "withholding", 5, "T4", "W011", "110206", 300),
+     "withholding", 5, "T4", "W006", "110206", 300),
+    ("WHT5-PRF-S", "WHT 5% professional fees (deducted by customer)", "خصم وإضافة 5% أتعاب مهنية (لدى العميل)",
+     "sale", "withholding", 5, "T4", "W010", "110206", 300),
 ]
 
 
@@ -186,6 +209,7 @@ def setup(company, vat, year, egypt=None):
         ("Large payment → Controller + CFO", "payment", 500000, [4, 5]),
         ("Large manual journal → Controller", "journal_entry", 100000, [4]),
         ("Large sales order → Senior Accountant", "sales_order", 250000, [3]),
+        ("Large inventory count variance → Controller", "inventory_count", 25000, [4]),
     ]:
         ApprovalRule.objects.create(company=company, name=name, document_type=dtype, min_amount=amount * k,
                                     approver_levels=levels)

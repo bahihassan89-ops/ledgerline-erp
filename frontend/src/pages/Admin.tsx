@@ -110,20 +110,30 @@ const DEFAULTS: [string, string, (a: any) => boolean][] = [
   ['inventory_adjustment_account', 'Inventory adjustments', (a) => a.account_class === 'expense'], ['fx_gain_account', 'Realised FX gain', (a) => a.account_class === 'income'],
   ['fx_loss_account', 'Realised FX loss', (a) => a.account_class === 'expense'], ['retained_earnings_account', 'Retained earnings', (a) => a.account_type === 'retained_earnings'],
 ]
+const JOURNAL_DEFAULTS: [string, string][] = [['sales_journal', 'Sales journal'], ['purchase_journal', 'Purchase journal'], ['inventory_journal', 'Inventory journal'],
+  ['opening_journal', 'Opening balances journal'], ['depreciation_journal', 'Depreciation journal'], ['general_journal', 'General journal'], ['closing_journal', 'Closing journal']]
+// Expected Credit Loss provisioning rates (%) applied to each AR aging bucket -- see
+// apps.billing.services.ecl_aged_receivables / apps.ledger.models.AccountingSettings. FC to
+// confirm actual rates; they default to 0% (no provision) until set here.
+const ECL_RATES: [string, string][] = [['ecl_rate_current', 'Current'], ['ecl_rate_1_30', '1–30 days'], ['ecl_rate_31_60', '31–60 days'], ['ecl_rate_61_90', '61–90 days'], ['ecl_rate_over_90', 'Over 90 days']]
 function DefaultsTab() {
   const { data, setData } = useFetch<any>('/accounting-settings/')
   const { run, busy } = useAction()
   if (!data) return null
   return <div className="card card-body stack">
     <div className="grid form">{DEFAULTS.map(([k, l, f]) => <Field key={k} label={l}><AccountSelect value={data[k]} onChange={(v) => setData({ ...data, [k]: v })} filter={f} /></Field>)}
-      {[['sales_journal', 'Sales journal'], ['purchase_journal', 'Purchase journal'], ['inventory_journal', 'Inventory journal'], ['general_journal', 'General journal'], ['closing_journal', 'Closing journal']].map(([k, l]) => <Field key={k} label={l}><JournalSelect value={data[k]} onChange={(v) => setData({ ...data, [k]: v })} /></Field>)}</div>
+      {JOURNAL_DEFAULTS.map(([k, l]) => <Field key={k} label={l}><JournalSelect value={data[k]} onChange={(v) => setData({ ...data, [k]: v })} /></Field>)}</div>
+    <h3>Expected Credit Loss (bad-debt) provision rates</h3>
+    <div className="muted">Applied to each AR aging bucket on the "ECL aged receivables" report. Leave at 0% if you don't provision for bad debts.</div>
+    <div className="grid form">{ECL_RATES.map(([k, l]) => <Field key={k} label={`${l} %`}><input className="num" value={data[k] ?? ''} onChange={(e) => setData({ ...data, [k]: e.target.value })} /></Field>)}</div>
     <div><button className="primary" disabled={busy} onClick={() => run(() => patch('/accounting-settings/', data), 'Saved')}>Save</button></div>
   </div>
 }
 
 type FieldDef = { k: string; l: string; t?: 'bool' | 'num' | 'date' | 'account' | 'currency' | 'select' | 'levels'; opts?: [string, string][]; f?: (a: any) => boolean; show?: (r: any) => any }
 const JOURNAL_FIELDS: FieldDef[] = [{ k: 'code', l: 'Code' }, { k: 'name', l: 'Name' }, { k: 'type', l: 'Type', t: 'select', opts: [['general', 'General'], ['bank', 'Bank'], ['cash', 'Cash'], ['sale', 'Sales'], ['purchase', 'Purchases'], ['inventory', 'Inventory']] },
-  { k: 'default_account', l: 'Bank / cash account', t: 'account', f: (a) => ['bank', 'cash'].includes(a.account_type) }, { k: 'currency', l: 'Currency (optional)', t: 'currency' }, { k: 'allow_manual', l: 'Allow manual entries', t: 'bool' }, { k: 'active', l: 'Active', t: 'bool' }]
+  { k: 'default_account', l: 'Bank / cash account', t: 'account', f: (a) => ['bank', 'cash'].includes(a.account_type) }, { k: 'currency', l: 'Currency (optional)', t: 'currency' }, { k: 'allow_manual', l: 'Allow manual entries', t: 'bool' },
+  { k: 'is_imprest', l: 'Imprest / petty-cash fund', t: 'bool' }, { k: 'imprest_amount', l: 'Float amount', t: 'num' }, { k: 'active', l: 'Active', t: 'bool' }]
 const TAX_FIELDS: FieldDef[] = [{ k: 'code', l: 'Code' }, { k: 'name', l: 'Name' }, { k: 'name_ar', l: 'الاسم بالعربية' }, { k: 'scope', l: 'Scope', t: 'select', opts: [['sale', 'Sales'], ['purchase', 'Purchases']] },
   { k: 'kind', l: 'Kind', t: 'select', opts: [['vat', 'VAT (added)'], ['withholding', 'Withholding (deducted)']] }, { k: 'rate', l: 'Rate %', t: 'num' },
   { k: 'eta_type', l: 'ETA tax type (T1, T4…)' }, { k: 'eta_subtype', l: 'ETA sub-type (V009, W004…)' }, { k: 'min_base', l: 'Withholding from amount (EGP)', t: 'num' },

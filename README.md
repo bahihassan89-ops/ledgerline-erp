@@ -5,6 +5,7 @@ costing, built for a professional accounting team. The accounting rules are enfo
 application **and** in the PostgreSQL database itself.
 
 * **Accounting handbook (Egypt edition)** → [`docs/ACCOUNTING_DESIGN.md`](docs/ACCOUNTING_DESIGN.md) — every rule, entry, control and report; start here
+* **Cookbook (how to use every screen)** → [`docs/COOKBOOK.md`](docs/COOKBOOK.md) — task-by-task guide for clerks, accountants, controllers and admins
 * **Security model** → [`docs/SECURITY.md`](docs/SECURITY.md)
 * **Installing & running it** → [`docs/OPERATIONS.md`](docs/OPERATIONS.md)
 * **Free trial server on Oracle Cloud** → [`docs/TRIAL_ORACLE.md`](docs/TRIAL_ORACLE.md)

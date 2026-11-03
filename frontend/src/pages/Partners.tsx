@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CurrencySelect, SimpleSelect, WhtSelect } from '../components/pickers'
+import { CompanySelect, CurrencySelect, SimpleSelect, WhtSelect } from '../components/pickers'
 import { DataTable, Field, Modal, PageHead, useAction } from '../components/ui'
 import { patch, post } from '../lib/api'
 import { useAuth } from '../lib/auth'
@@ -34,7 +34,7 @@ export default function Partners({ kind }: { kind: 'customer' | 'vendor' }) {
 
 function PartnerForm({ initial, onClose, onSaved }: any) {
   const { can } = useAuth()
-  const [f, setF] = useState<any>({ code: '', name: '', name_ar: '', is_customer: false, is_vendor: false, tax_number: '', email: '', phone: '', address: '', country: 'EG', currency: null, payment_term: null, credit_limit: '0', credit_check: false, on_hold: false, notes: '', active: true, withholding_tax: null, eta_receiver_type: 'B', national_id: '', governate: '', region_city: '', street: '', building_number: '', postal_code: '', ...initial })
+  const [f, setF] = useState<any>({ code: '', name: '', name_ar: '', is_customer: false, is_vendor: false, tax_number: '', email: '', phone: '', address: '', country: 'EG', currency: null, payment_term: null, credit_limit: '0', credit_check: false, on_hold: false, notes: '', active: true, withholding_tax: null, eta_receiver_type: 'B', national_id: '', governate: '', region_city: '', street: '', building_number: '', postal_code: '', is_intercompany: false, linked_company: null, ...initial })
   const { run, busy } = useAction()
   const set = (k: string, v: any) => setF({ ...f, [k]: v })
   const ro = !can('partners.partner.manage')
@@ -79,6 +79,13 @@ function PartnerForm({ initial, onClose, onSaved }: any) {
         </div>
         <label className="check"><input type="checkbox" checked={f.credit_check} onChange={(e) => set('credit_check', e.target.checked)} disabled={!credit} />Block sales orders above the credit limit</label>
         <label className="check"><input type="checkbox" checked={f.on_hold} onChange={(e) => set('on_hold', e.target.checked)} disabled={!credit} />On hold (no new orders)</label>
+      </div>
+      <div className="card card-body stack" style={{ gap: 10 }}>
+        <h3>Intercompany</h3>
+        <label className="check"><input type="checkbox" checked={f.is_intercompany} onChange={(e) => set('is_intercompany', e.target.checked)} disabled={ro} />This partner is another company in our group</label>
+        {f.is_intercompany && <Field label="Linked company" hint="Transactions against this partner post as ordinary sales/purchases -- see the Intercompany reconciliation report for matching the two sides; nothing is eliminated automatically.">
+          <CompanySelect value={f.linked_company} onChange={(v) => set('linked_company', v)} disabled={ro} />
+        </Field>}
       </div>
     </Modal>
   )

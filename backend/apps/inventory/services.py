@@ -16,8 +16,8 @@ from apps.core.models import Sequence
 from apps.core.money import ZERO, D, round_to
 from apps.ledger import services as gl
 
-from .models import (INBOUND, CostLayer, CostMethod, Lot, MoveType, ProductValuation, SerialNumber, SerialStatus,
-                     StockMove, StockMoveSerial, StockQuant)
+from .models import (INBOUND, ConsignmentDirection, CostLayer, CostMethod, InventoryCount, Lot, MoveType,
+                     ProductValuation, SerialNumber, SerialStatus, StockMove, StockMoveSerial, StockQuant)
 
 
 def _lock_valuation(company, product):
@@ -37,6 +37,10 @@ def _check(company, product, warehouse, qty):
         raise BusinessError(f"{product} is not a stockable product.", "not_stockable")
     if D(qty) <= 0:
         raise BusinessError("Quantity must be positive.", "invalid_qty")
+    if warehouse.is_consignment and warehouse.consignment_direction == ConsignmentDirection.IN:
+        raise BusinessError(f"{warehouse.code} holds goods on consignment that we don't own; use "
+                            "consignment_receive/consignment_return instead of ordinary stock moves.",
+                            "consignment_warehouse")
 
 
 def _resolve_lot(company, product, lot, lot_number):
@@ -237,28 +241,68 @@ def issue(company, product, warehouse, qty, on_date, user, *, counter_account,
 
 @transaction.atomic
 def adjust(company, product, warehouse, counted_qty, on_date, user, *, unit_cost=None, reason=""):
-    """Physical count: set on-hand to `counted_qty`. Gains are valued at `unit_cost` or current average."""
+    """Physical count: set on-hand to `counted_qty`. Gains are valued at `unit_cost` or current average.
+    Creates an InventoryCount record and routes it through apply_count() so large variances (per an
+    ApprovalRule for document_type='inventory_count') are gated by approval instead of booked
+    straight away -- see the FC review comment on count-adjustment controls."""
+    count = InventoryCount.objects.create(company=company, product=product, warehouse=warehouse, date=on_date,
+                                          counted_qty=counted_qty, unit_cost=unit_cost, reason=reason,
+                                          created_by=user)
+    return apply_count(count, user)
+
+
+@transaction.atomic
+def apply_count(count, user):
+    """Computes the on-hand variance for `count`, requests approval if a matching ApprovalRule
+    applies, and only then books the StockMove. Returns the InventoryCount: check `.state` --
+    'to_approve' means it is now waiting, anything else (normally 'done') has `.move` set."""
+    count = InventoryCount.objects.select_for_update().select_related("company", "product", "warehouse").get(
+        pk=count.pk)
+    company = count.company
+    if count.state not in ("draft", "approved"):
+        raise BusinessError(f"Count cannot be applied from state '{count.state}'.", "invalid_state")
     st = gl.settings_for(company)
     acc = gl.require_account(st.inventory_adjustment_account, "inventory adjustment")
-    quant = _lock_quant(company, product, warehouse)
-    diff = D(counted_qty) - quant.quantity
+    quant = _lock_quant(company, count.product, count.warehouse)
+    diff = D(count.counted_qty) - quant.quantity
     if diff == 0:
         raise BusinessError("Counted quantity equals quantity on hand; nothing to adjust.", "no_difference")
-    ref = f"Count adjustment{': ' + reason if reason else ''}"
+    cost = D(count.unit_cost) if count.unit_cost is not None else _lock_valuation(company, count.product).average_cost
+    if not cost:
+        cost = count.product.purchase_price
+    value = abs(diff) * cost
+    count.diff_qty = diff
+    count.value = value
+    count.save(update_fields=["diff_qty", "value"])
+
+    from apps.approvals.models import DocumentType
+    from apps.approvals.services import ensure_approved
+    if not ensure_approved(company, DocumentType.INVENTORY_COUNT, count, value, user):
+        return count  # now waiting for approval
+
+    ref = f"Count adjustment{': ' + count.reason if count.reason else ''}"
     if diff > 0:
-        cost = D(unit_cost) if unit_cost is not None else _lock_valuation(company, product).average_cost
-        if not cost:
-            cost = product.purchase_price
-        return receive(company, product, warehouse, diff, cost, on_date, user, counter_account=acc,
+        move = receive(company, count.product, count.warehouse, diff, cost, count.date, user, counter_account=acc,
                        move_type=MoveType.ADJUST_IN, reference=ref)
-    return issue(company, product, warehouse, -diff, on_date, user, counter_account=acc,
-                 move_type=MoveType.ADJUST_OUT, reference=ref)
+    else:
+        move = issue(company, count.product, count.warehouse, -diff, count.date, user, counter_account=acc,
+                     move_type=MoveType.ADJUST_OUT, reference=ref)
+    count.move = move
+    count.state = "done"
+    count.save(update_fields=["move", "state"])
+    return count
 
 
 @transaction.atomic
 def transfer(company, product, src, dst, qty, on_date, user, reference=""):
-    """Move stock between warehouses. Valuation is company-wide, so no GL impact."""
+    """Move stock between warehouses. Valuation is company-wide, so no GL impact. A consignment-out
+    warehouse (our own goods held at a partner's premises) is a perfectly normal destination here --
+    we still own the stock. A consignment-in warehouse (a partner's goods held at our premises) is
+    not, since this company never owns that stock; see consignment_receive/consignment_return."""
     _check(company, product, src, qty)
+    if dst.is_consignment and dst.consignment_direction == ConsignmentDirection.IN:
+        raise BusinessError(f"{dst.code} holds goods on consignment that we don't own; use "
+                            "consignment_receive instead of transfer.", "consignment_warehouse")
     if src.pk == dst.pk or dst.company_id != company.pk:
         raise BusinessError("Choose two different warehouses of this company.", "invalid_transfer")
     qty = D(qty)
@@ -278,6 +322,84 @@ def transfer(company, product, src, dst, qty, on_date, user, reference=""):
                              reference=reference or f"From {src.code}", created_by=user)
     audit.record("stock_transfer", out, {"product": product.sku, "qty": qty, "from": src.code, "to": dst.code})
     return out
+
+
+def _check_consignment_warehouse(warehouse, direction):
+    if not warehouse.is_consignment or warehouse.consignment_direction != direction:
+        raise BusinessError(f"{warehouse.code} is not set up as a '{direction}' consignment warehouse.",
+                            "not_consignment")
+
+
+@transaction.atomic
+def consignment_receive(company, product, warehouse, qty, on_date, user, *, partner=None, reference=""):
+    """Record a partner's goods arriving at our premises on consignment -- we never own this stock, so
+    unlike receive(), this only moves StockQuant and never touches ProductValuation/CostLayer, and never
+    posts to the GL. The eventual sale (and any payable recognised to the consignor) is a separate,
+    ordinary commercial document -- a normal vendor bill once the goods are actually sold or settled --
+    not something this function guesses at."""
+    if product.company_id != company.pk or warehouse.company_id != company.pk:
+        raise BusinessError("Product or warehouse belongs to another company.", "cross_company")
+    if not product.is_stock:
+        raise BusinessError(f"{product} is not a stockable product.", "not_stockable")
+    qty = D(qty)
+    if qty <= 0:
+        raise BusinessError("Quantity must be positive.", "invalid_qty")
+    _check_consignment_warehouse(warehouse, ConsignmentDirection.IN)
+    partner = partner or warehouse.consignment_partner
+    q = _lock_quant(company, product, warehouse)
+    q.quantity += qty
+    q.save()
+    move = StockMove.objects.create(company=company, number=_number(company, on_date, True), date=on_date,
+                                    move_type=MoveType.CONSIGN_IN, product=product, warehouse=warehouse,
+                                    quantity=qty, partner=partner, reference=reference, created_by=user)
+    audit.record("consignment_receive", move, {"product": product.sku, "qty": str(qty), "warehouse": warehouse.code,
+                                                "partner": partner.name if partner else None})
+    return move
+
+
+@transaction.atomic
+def consignment_return(company, product, warehouse, qty, on_date, user, *, partner=None, reference=""):
+    """Record consigned-in stock leaving our premises again -- either sold (book the sale/payable
+    separately through the normal invoice/bill flow) or physically returned to the consignor. Only
+    StockQuant moves; no valuation or GL impact, mirroring consignment_receive."""
+    if product.company_id != company.pk or warehouse.company_id != company.pk:
+        raise BusinessError("Product or warehouse belongs to another company.", "cross_company")
+    qty = D(qty)
+    if qty <= 0:
+        raise BusinessError("Quantity must be positive.", "invalid_qty")
+    _check_consignment_warehouse(warehouse, ConsignmentDirection.IN)
+    partner = partner or warehouse.consignment_partner
+    q = _lock_quant(company, product, warehouse)
+    if q.quantity < qty:
+        raise BusinessError(f"Only {q.quantity} of {product} held on consignment at {warehouse.code}.",
+                            "insufficient_stock")
+    q.quantity -= qty
+    q.save()
+    move = StockMove.objects.create(company=company, number=_number(company, on_date, False), date=on_date,
+                                    move_type=MoveType.CONSIGN_OUT, product=product, warehouse=warehouse,
+                                    quantity=qty, partner=partner, reference=reference, created_by=user)
+    audit.record("consignment_return", move, {"product": product.sku, "qty": str(qty), "warehouse": warehouse.code,
+                                               "partner": partner.name if partner else None})
+    return move
+
+
+def consignment_register(company, direction=None):
+    """Snapshot of consigned stock: for each consignment warehouse (optionally filtered to 'in' or
+    'out'), the on-hand quantity per product. 'in' rows are goods we hold but don't own (from
+    StockQuant on consignment-in warehouses); 'out' rows are our own goods held elsewhere (from
+    StockQuant on consignment-out warehouses, which are valued normally -- see Warehouse docstring)."""
+    from .models import Warehouse
+    warehouses = Warehouse.objects.filter(company=company, is_consignment=True)
+    if direction:
+        warehouses = warehouses.filter(consignment_direction=direction)
+    rows = []
+    for wh in warehouses.select_related("consignment_partner"):
+        for q in (StockQuant.objects.filter(company=company, warehouse=wh, quantity__gt=0)
+                  .select_related("product").order_by("product__sku")):
+            rows.append({"warehouse": wh.code, "direction": wh.consignment_direction,
+                        "partner": wh.consignment_partner.name if wh.consignment_partner_id else None,
+                        "product": q.product.sku, "product_name": q.product.name, "quantity": str(q.quantity)})
+    return rows
 
 
 def _emit(company, move):

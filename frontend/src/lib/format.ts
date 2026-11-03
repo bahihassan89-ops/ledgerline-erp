@@ -1,3 +1,5 @@
+import { postDownload } from './api'
+
 export function money(v: string | number | null | undefined, currency?: string, decimals = 2): string {
   const n = typeof v === 'number' ? v : parseFloat(v ?? '0')
   if (Number.isNaN(n)) return '—'
@@ -26,4 +28,12 @@ export function download(name: string, content: string) {
   a.download = name
   a.click()
   URL.revokeObjectURL(a.href)
+}
+
+/** Export any report/register's rows+cols (the same shape already used for toCSV) as a genuine,
+ * Excel-compatible .xlsx file -- numeric-looking values become real numeric cells server-side.
+ * See apps.core.views.ExportXlsxView. */
+export async function exportXlsx(filename: string, rows: Record<string, any>[], cols: { key: string; title: string }[], sheetName = 'Sheet1') {
+  const name = filename.toLowerCase().endsWith('.xlsx') ? filename : `${filename}.xlsx`
+  await postDownload('/export/xlsx/', name, { filename: name, sheets: [{ name: sheetName, cols, rows }] })
 }

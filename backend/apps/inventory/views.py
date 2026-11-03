@@ -11,9 +11,10 @@ from apps.ledger.models import Account
 from apps.ledger.views import parse_date
 
 from . import services
-from .models import Lot, MoveType, Product, ProductCategory, SerialNumber, StockMove, StockQuant, Warehouse
-from .serializers import (LotSerializer, ProductCategorySerializer, ProductSerializer, SerialNumberSerializer,
-                          StockMoveSerializer, StockQuantSerializer, WarehouseSerializer)
+from .models import InventoryCount, Lot, MoveType, Product, ProductCategory, SerialNumber, StockMove, StockQuant, \
+    Warehouse
+from .serializers import (InventoryCountSerializer, LotSerializer, ProductCategorySerializer, ProductSerializer,
+                          SerialNumberSerializer, StockMoveSerializer, StockQuantSerializer, WarehouseSerializer)
 
 
 class ProductCategoryViewSet(CompanyViewSet):
@@ -53,10 +54,11 @@ class ProductViewSet(CompanyViewSet):
 
 
 class WarehouseViewSet(CompanyViewSet):
-    queryset = Warehouse.objects.all()
+    queryset = Warehouse.objects.select_related("consignment_partner")
     serializer_class = WarehouseSerializer
     perms = {"list": "inventory.stock.view", "*": "inventory.product.manage"}
     pagination_class = None
+    filterset_fields = ["is_consignment", "consignment_direction", "active"]
 
 
 class StockQuantViewSet(CompanyReadOnlyViewSet):
@@ -92,6 +94,23 @@ class SerialNumberViewSet(CompanyViewSet):
         return Response(services.serial_history(self.get_object()))
 
 
+class InventoryCountViewSet(CompanyReadOnlyViewSet):
+    """Read-only list of physical-count adjustments (created via POST /stock-moves/adjust/) plus
+    an `apply` action to re-run a count once its approval request has been granted -- the generic
+    Approvals UI only flips ApprovalRequest/InventoryCount.state to 'approved', it doesn't book the
+    StockMove itself, so whoever is watching this list (or the count's own requester) finishes it here,
+    the same way LandedCostViewSet.post finalises an approved landed cost."""
+    queryset = InventoryCount.objects.select_related("product", "warehouse", "move")
+    serializer_class = InventoryCountSerializer
+    perms = {"list": "inventory.stock.view", "apply": "inventory.stock.adjust"}
+    filterset_fields = ["product", "warehouse", "state"]
+
+    @action(detail=True, methods=["post"])
+    def apply(self, request, pk=None):
+        count = services.apply_count(self.get_object(), request.user)
+        return Response(self.get_serializer(count).data)
+
+
 class StockOpSerializer(serializers.Serializer):
     product = serializers.IntegerField()
     warehouse = serializers.IntegerField()
@@ -104,13 +123,15 @@ class StockOpSerializer(serializers.Serializer):
     reason = serializers.CharField(required=False, allow_blank=True, max_length=200)
     lot_number = serializers.CharField(required=False, allow_blank=True, max_length=60)
     serials = serializers.ListField(child=serializers.CharField(max_length=80), required=False)
+    partner = serializers.IntegerField(required=False)
 
 
 class StockMoveViewSet(CompanyReadOnlyViewSet):
     queryset = StockMove.objects.select_related("product", "warehouse", "journal_entry")
     serializer_class = StockMoveSerializer
     perms = {"list": "inventory.stock.view", "adjust": "inventory.stock.adjust", "transfer": "inventory.stock.move",
-             "opening": "inventory.stock.adjust"}
+             "opening": "inventory.stock.adjust", "consignment_receive": "inventory.stock.move",
+             "consignment_return": "inventory.stock.move"}
     http_method_names = ["get", "post", "head", "options"]
     filterset_fields = {"product": ["exact"], "warehouse": ["exact"], "move_type": ["exact"],
                         "date": ["gte", "lte"]}
@@ -124,6 +145,11 @@ class StockMoveViewSet(CompanyReadOnlyViewSet):
         v["product"] = get_object_or_404(Product, pk=v["product"], company=c)
         v["warehouse"] = get_object_or_404(Warehouse, pk=v["warehouse"], company=c)
         v["date"] = v.get("date") or timezone.localdate()
+        if v.get("partner"):
+            from apps.partners.models import Partner
+            v["partner"] = get_object_or_404(Partner, pk=v["partner"], company=c)
+        else:
+            v["partner"] = None
         return v
 
     @action(detail=False, methods=["post"])
@@ -131,9 +157,13 @@ class StockMoveViewSet(CompanyReadOnlyViewSet):
         v = self._load(request)
         if v.get("counted_qty") is None:
             raise serializers.ValidationError({"counted_qty": "Required."})
-        m = services.adjust(self.company, v["product"], v["warehouse"], v["counted_qty"], v["date"], request.user,
-                            unit_cost=v.get("unit_cost"), reason=v.get("reason", ""))
-        return Response(StockMoveSerializer(m).data, status=201)
+        count = services.adjust(self.company, v["product"], v["warehouse"], v["counted_qty"], v["date"],
+                                request.user, unit_cost=v.get("unit_cost"), reason=v.get("reason", ""))
+        if count.state == "to_approve":
+            return Response({"pending_approval": True, "id": count.id, "diff_qty": count.diff_qty,
+                             "value": count.value, "message": "This adjustment is large enough to need "
+                             "approval; it has been submitted and will post once approved."}, status=202)
+        return Response(StockMoveSerializer(count.move).data, status=201)
 
     @action(detail=False, methods=["post"])
     def opening(self, request):
@@ -153,6 +183,26 @@ class StockMoveViewSet(CompanyReadOnlyViewSet):
         dst = get_object_or_404(Warehouse, pk=v.get("to_warehouse"), company=self.company)
         m = services.transfer(self.company, v["product"], v["warehouse"], dst, v.get("quantity") or 0, v["date"],
                               request.user, v.get("reason", ""))
+        return Response(StockMoveSerializer(m).data, status=201)
+
+    @action(detail=False, methods=["post"], url_path="consignment-receive")
+    def consignment_receive(self, request):
+        """A partner's goods arriving at one of our 'consignment-in' warehouses -- quantity only, no
+        valuation/GL impact. See services.consignment_receive."""
+        v = self._load(request)
+        m = services.consignment_receive(self.company, v["product"], v["warehouse"], v.get("quantity") or 0,
+                                         v["date"], request.user, partner=v.get("partner"),
+                                         reference=v.get("reason", ""))
+        return Response(StockMoveSerializer(m).data, status=201)
+
+    @action(detail=False, methods=["post"], url_path="consignment-return")
+    def consignment_return(self, request):
+        """Consigned-in stock leaving our premises again (sold or physically returned). See
+        services.consignment_return."""
+        v = self._load(request)
+        m = services.consignment_return(self.company, v["product"], v["warehouse"], v.get("quantity") or 0,
+                                        v["date"], request.user, partner=v.get("partner"),
+                                        reference=v.get("reason", ""))
         return Response(StockMoveSerializer(m).data, status=201)
 
 

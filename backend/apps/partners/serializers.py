@@ -17,7 +17,8 @@ class PartnerSerializer(CompanyScopedSerializer):
         fields = ["id", "code", "name", "name_ar", "is_customer", "is_vendor", "tax_number", "email", "phone",
                   "address", "country", "currency", "payment_term", "credit_limit", "credit_check", "on_hold",
                   "receivable_account", "payable_account", "withholding_tax", "eta_receiver_type", "national_id",
-                  "governate", "region_city", "street", "building_number", "postal_code", "notes", "active"]
+                  "governate", "region_city", "street", "building_number", "postal_code", "notes",
+                  "is_intercompany", "linked_company", "active"]
 
     def validate(self, attrs):
         attrs = super().validate(attrs)

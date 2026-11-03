@@ -22,7 +22,7 @@ CHART = [
                 ("110205", "Notes Receivable — Cheques Under Collection", "أوراق القبض — شيكات تحت التحصيل",
                  "notes_receivable", C),
                 ("110206", "Taxes Withheld by Customers", "ضرائب خصم من المنبع لدى العملاء (خصم وإضافة)",
-                 "wht_receivable"),
+                 "wht_receivable", C),
             ]),
             ("1103", "Inventories", "المخزون", "group", [
                 ("110301", "Inventory — Finished Goods / Merchandise", "مخزون البضاعة التامة / بضاعة بغرض البيع",
@@ -34,7 +34,7 @@ CHART = [
             ("1104", "Prepayments and Tax Assets", "مصروفات مدفوعة مقدماً وأرصدة ضريبية", "group", [
                 ("110401", "Prepaid Expenses", "مصروفات مدفوعة مقدماً", "prepayment"),
                 ("110402", "Advances to Suppliers", "دفعات مقدمة للموردين", "prepayment"),
-                ("110403", "Input VAT Recoverable", "ضريبة القيمة المضافة على المشتريات (مدخلات)", "tax_input"),
+                ("110403", "Input VAT Recoverable", "ضريبة القيمة المضافة على المشتريات (مدخلات)", "tax_input", C),
                 ("110404", "Advance Income Tax Payments", "دفعات مقدمة من ضريبة الدخل", "current_asset"),
             ]),
         ]),
@@ -78,11 +78,11 @@ CHART = [
                 ("210203", "Social Insurance Payable", "هيئة التأمينات الاجتماعية", "current_liability"),
             ]),
             ("2103", "Tax Liabilities", "الالتزامات الضريبية", "group", [
-                ("210301", "Output VAT Payable", "ضريبة القيمة المضافة على المبيعات (مخرجات)", "tax_output"),
+                ("210301", "Output VAT Payable", "ضريبة القيمة المضافة على المبيعات (مخرجات)", "tax_output", C),
                 ("210302", "VAT Settlement Account", "حساب تسوية ضريبة القيمة المضافة", "current_liability"),
                 ("210303", "Corporate Income Tax Payable", "ضريبة الدخل المستحقة", "current_liability"),
                 ("210304", "Withholding Tax Payable (Discount & Addition)", "ضرائب الخصم والإضافة المستحقة",
-                 "wht_payable"),
+                 "wht_payable", C),
                 ("210305", "Payroll Income Tax Payable", "ضريبة كسب العمل المستحقة", "current_liability"),
                 ("210306", "Stamp Tax Payable", "ضريبة الدمغة المستحقة", "current_liability"),
             ]),
@@ -209,4 +209,5 @@ DEFAULT_ACCOUNTS = {
     "asset_disposal_loss_account": "530104", "landed_cost_clearing_account": "210104",
     "wip_account": "110304", "labour_absorbed_account": "510203", "overhead_absorbed_account": "510204",
     "production_scrap_account": "510205", "subcontracting_clearing_account": "210105",
+    "cheque_bounce_fee_account": "520306",
 }

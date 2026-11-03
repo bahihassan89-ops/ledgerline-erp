@@ -12,10 +12,13 @@ from apps.core.money import D
 from apps.iam.access import require
 from apps.ledger.models import Journal
 from apps.ledger.views import parse_date
+from apps.partners.models import Partner
 
 from . import services
-from .models import Allocation, DocState, Invoice, InvoiceType, Payment, REFUND_TYPES
-from .serializers import InvoiceSerializer, PaymentSerializer
+from .models import Allocation, ChequeInstalmentPlan, DocState, GuaranteeCheque, Invoice, InvoiceType, Payment, \
+    REFUND_TYPES
+from .serializers import ChequeInstalmentPlanSerializer, GuaranteeChequeSerializer, InvoiceSerializer, \
+    PaymentSerializer
 
 
 class _InvoiceBase(CompanyViewSet):
@@ -130,7 +133,8 @@ class PaymentViewSet(CompanyViewSet):
              "destroy": "billing.payment.create", "post": "billing.payment.post", "cancel": "billing.payment.post",
              "allocate": "billing.payment.post", "unallocate": "billing.payment.post",
              "cheque_deposit": "billing.cheque.manage", "cheque_clear": "billing.cheque.manage",
-             "cheque_bounce": "billing.cheque.manage", "cheques": "billing.payment.view"}
+             "cheque_bounce": "billing.cheque.manage", "cheque_endorse": "billing.cheque.manage",
+             "cheques": "billing.payment.view"}
     filterset_fields = {"state": ["exact"], "direction": ["exact"], "partner": ["exact"], "date": ["gte", "lte"]}
     search_fields = ["number", "reference", "partner__name"]
 
@@ -187,10 +191,65 @@ class PaymentViewSet(CompanyViewSet):
 
     @action(detail=True, methods=["post"], url_path="cheque-bounce")
     def cheque_bounce(self, request, pk=None):
-        pay = services.cheque_bounce(self.get_object(), request.user, request.data.get("reason", ""))
+        pay = services.cheque_bounce(self.get_object(), request.user, request.data.get("reason", ""),
+                                     fee=request.data.get("fee") or None,
+                                     on_date=parse_date(request.data.get("date"), None))
+        return Response(self.get_serializer(pay).data)
+
+    @action(detail=True, methods=["post"], url_path="cheque-endorse")
+    def cheque_endorse(self, request, pk=None):
+        to_partner = get_object_or_404(Partner, pk=request.data.get("to_partner"), company=self.company)
+        pay = services.cheque_endorse(self.get_object(), request.user, to_partner,
+                                      parse_date(request.data.get("date"), timezone.localdate()))
         return Response(self.get_serializer(pay).data)
 
     @action(detail=False)
     def cheques(self, request):
         return Response(services.cheque_register(self.company, request.query_params.get("direction"),
                                                  request.query_params.get("state")))
+
+
+class ChequeInstalmentPlanViewSet(CompanyViewSet):
+    """Post-dated cheque schedules (FC review: "instalment and post-dated cheque schedules used
+    in our real estate companies"). Create a plan, then POST .../generate/ once to book every
+    instalment cheque at once; after that each cheque is handled individually through
+    PaymentViewSet's normal cheque-deposit/clear/bounce/endorse actions."""
+    queryset = ChequeInstalmentPlan.objects.select_related("partner", "journal", "invoice")
+    serializer_class = ChequeInstalmentPlanSerializer
+    perms = {"list": "billing.payment.view", "*": "billing.payment.create", "generate": "billing.cheque.manage"}
+    filterset_fields = ["partner", "direction", "state"]
+
+    def perform_destroy(self, instance):
+        if instance.state != "draft":
+            raise BusinessError("Generated plans cannot be deleted; cancel the individual cheques instead.",
+                                "not_draft")
+        instance.delete()
+
+    @action(detail=True, methods=["post"])
+    def generate(self, request, pk=None):
+        services.generate_instalment_cheques(self.get_object(), request.user,
+                                              cheque_numbers=request.data.get("cheque_numbers"),
+                                              cheque_bank=request.data.get("cheque_bank", ""))
+        plan = self.get_object()
+        plan.refresh_from_db()
+        return Response(self.get_serializer(plan).data)
+
+
+class GuaranteeChequeViewSet(CompanyViewSet):
+    """Security/tender/performance-guarantee cheques held in custody only -- never posted to the
+    GL, so they stay off balance sheet until returned or forfeited (FC review)."""
+    queryset = GuaranteeCheque.objects.select_related("partner")
+    serializer_class = GuaranteeChequeSerializer
+    perms = {"list": "billing.payment.view", "*": "billing.cheque.manage"}
+    filterset_fields = ["partner", "direction", "state"]
+
+    @action(detail=True, methods=["post"], url_path="return")
+    def return_cheque(self, request, pk=None):
+        gc = services.guarantee_cheque_return(self.get_object(), request.user,
+                                              parse_date(request.data.get("date"), None))
+        return Response(self.get_serializer(gc).data)
+
+    @action(detail=True, methods=["post"])
+    def forfeit(self, request, pk=None):
+        gc = services.guarantee_cheque_forfeit(self.get_object(), request.user, request.data.get("notes", ""))
+        return Response(self.get_serializer(gc).data)

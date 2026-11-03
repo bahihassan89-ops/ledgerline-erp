@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from apps.core.serializers_base import CompanyScopedSerializer
 
-from .models import Lot, Product, ProductCategory, SerialNumber, StockMove, StockQuant, Warehouse
+from .models import InventoryCount, Lot, Product, ProductCategory, SerialNumber, StockMove, StockQuant, Warehouse
 
 
 class ProductCategorySerializer(CompanyScopedSerializer):
@@ -60,9 +60,13 @@ class ProductSerializer(CompanyScopedSerializer):
 
 
 class WarehouseSerializer(CompanyScopedSerializer):
+    consignment_partner_name = serializers.CharField(source="consignment_partner.name", read_only=True,
+                                                      default=None)
+
     class Meta:
         model = Warehouse
-        fields = ["id", "code", "name", "address", "active"]
+        fields = ["id", "code", "name", "address", "active", "is_consignment", "consignment_direction",
+                 "consignment_partner", "consignment_partner_name"]
 
 
 class LotSerializer(CompanyScopedSerializer):
@@ -99,6 +103,18 @@ class StockMoveSerializer(serializers.ModelSerializer):
         fields = ["id", "number", "date", "move_type", "product", "product_sku", "product_name", "warehouse",
                   "warehouse_code", "quantity", "unit_cost", "value", "partner", "reference", "journal_entry",
                   "entry_number", "lot", "lot_number", "manufacturing_order", "manufacturing_order_number"]
+
+
+class InventoryCountSerializer(CompanyScopedSerializer):
+    product_sku = serializers.CharField(source="product.sku", read_only=True)
+    warehouse_code = serializers.CharField(source="warehouse.code", read_only=True)
+    move_number = serializers.CharField(source="move.number", read_only=True, default=None)
+
+    class Meta:
+        model = InventoryCount
+        fields = ["id", "warehouse", "warehouse_code", "product", "product_sku", "date", "counted_qty", "unit_cost",
+                  "reason", "state", "diff_qty", "value", "move", "move_number"]
+        read_only_fields = ["state", "diff_qty", "value", "move"]
 
 
 class StockQuantSerializer(serializers.ModelSerializer):
