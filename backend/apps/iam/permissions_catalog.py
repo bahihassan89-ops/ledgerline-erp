@@ -152,8 +152,8 @@ GLOBAL_CATALOG = {
 GLOBAL_CONTROLLER = ["company.create", "company.submit", "company.module.manage",
                       "membership.grant_any_company", "presence.view_team",
                       "report.intercompany", "report.consolidated", "ops.backup.manage"]
-GLOBAL_ACCOUNTING_MANAGER = ["membership.grant_any_company", "presence.view_team",
-                              "report.intercompany", "report.consolidated"]
+GLOBAL_ACCOUNTING_MANAGER = ["company.create", "company.submit", "membership.grant_any_company",
+                              "presence.view_team", "report.intercompany", "report.consolidated"]
 GLOBAL_CEO = list(GLOBAL_CATALOG)
 
 # name, level, permissions
