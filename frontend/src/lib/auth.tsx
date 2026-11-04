@@ -13,6 +13,7 @@ type Ctx = {
   canGlobal: (perm: string | string[]) => boolean
   reload: () => Promise<void>; logout: () => Promise<void>; switchCompany: (id: number) => void
   finishLogin: (tokens: { access: string; refresh: string }) => Promise<void>
+  needsCompanyChoice: boolean
 }
 const AuthCtx = createContext<Ctx>(null as any)
 
@@ -20,6 +21,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null)
   const [loading, setLoading] = useState(() => session.hasRefresh())
   const [companyId, setCompanyId] = useState<number | null>(() => Number(session.company()) || null)
+  // Set only by finishLogin (an actual sign-in just happened), never by the mount-time session
+  // restore -- so a page refresh with an already-chosen company goes straight back in, but a
+  // fresh login always asks a multi-company user which company they mean before entering it.
+  const [justAuthenticated, setJustAuthenticated] = useState(false)
 
   const reload = useCallback(async () => {
     try {
@@ -67,9 +72,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const ps = Array.isArray(perm) ? perm : [perm]
     return ps.some((p) => me.global_permissions.includes(p))
   }
-  const finishLogin = async (t: { access: string; refresh: string }) => { session.setTokens(t.access, t.refresh); await reload() }
+  const finishLogin = async (t: { access: string; refresh: string }) => { session.setTokens(t.access, t.refresh); setJustAuthenticated(true); await reload() }
   const switchCompany = (id: number) => { session.setCompany(id); setCompanyId(id); window.location.assign('/') }
-  return <AuthCtx.Provider value={{ me, company, loading, can, canGlobal, reload, logout, switchCompany, finishLogin }}>{children}</AuthCtx.Provider>
+  const needsCompanyChoice = justAuthenticated && !!me && me.companies.length > 1
+  return <AuthCtx.Provider value={{ me, company, loading, can, canGlobal, reload, logout, switchCompany, finishLogin, needsCompanyChoice }}>{children}</AuthCtx.Provider>
 }
 
 export const useAuth = () => useContext(AuthCtx)

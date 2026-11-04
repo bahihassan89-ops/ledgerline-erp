@@ -83,6 +83,33 @@ def submit_company(company, user):
     return company
 
 
+def _grant_submitter_membership(company):
+    """The Controller/Accounting Manager who drafted and submitted this company needs a real
+    Membership to actually work in it day to day (company switcher, approvals, postings) --
+    holding a *global* role (company.create/submit, membership.grant_any_company) only lets them
+    provision companies and manage any company's team, it doesn't give them standing inside a
+    company themselves, since that's governed entirely by Membership/Role like everyone else.
+    Land them on the company-scoped Role whose level matches their highest global role, so e.g.
+    a Central Financial Controller becomes that company's Financial Controller."""
+    from apps.iam.models import Membership, Role
+
+    user = company.submitted_by
+    if user is None:
+        return
+    level = max((r.level for r in user.global_roles.filter(active=True)), default=None)
+    if level is None:
+        return
+    role = (Role.objects.filter(company=company, level=level).first()
+            or Role.objects.filter(company=company, level__lte=level).order_by("-level").first())
+    if not role:
+        return
+    membership, _ = Membership.objects.get_or_create(user=user, company=company)
+    membership.roles.add(role)
+    if not membership.active:
+        membership.active = True
+        membership.save(update_fields=["active"])
+
+
 def approve_company(company, user):
     _require_state(company, CompanyState.PENDING_APPROVAL)
     company.state = CompanyState.ACTIVE
@@ -90,6 +117,7 @@ def approve_company(company, user):
     company.approved_by = user
     company.approved_at = timezone.now()
     company.save(update_fields=["state", "active", "approved_by", "approved_at"])
+    _grant_submitter_membership(company)
     audit.record("company_approved", company, company_id=company.pk)
     notify.send(company.submitted_by, f"Company approved: {company.name}", category="company",
                url=f"/company?company={company.pk}", company_id=company.pk)

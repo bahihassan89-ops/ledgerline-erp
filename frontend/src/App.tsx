@@ -1,7 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import { ToastProvider } from './components/ui'
-import { AuthProvider, useAuth } from './lib/auth'
+import { AuthProvider, useAuth, type Company } from './lib/auth'
 import Accounts from './pages/Accounts'
 import { Approvals, Audit, Integrations, Periods, Settings, Users } from './pages/Admin'
 import Dashboard from './pages/Dashboard'
@@ -27,11 +27,38 @@ import TeamActivity from './pages/TeamActivity'
 import GroupReports from './pages/GroupReports'
 import Backups from './pages/Backups'
 
+function CompanyChooser({ companies, onChoose }: { companies: Company[]; onChoose: (id: number) => void }) {
+  return (
+    <div className="login-wrap">
+      <div className="login-art">
+        <div className="brand" style={{ padding: 0 }}><div className="brand-mark">L</div>Ledgerline ERP</div>
+        <div>
+          <h1>Which company are you working in?</h1>
+          <p>You belong to more than one company. Pick one to continue — you can switch companies anytime from the sidebar.</p>
+        </div>
+      </div>
+      <div className="login-panel">
+        <div className="login-box" style={{ width: 'min(420px, 100%)' }}>
+          <h1>Choose a company</h1>
+          {companies.map((c) => (
+            <button key={c.id} type="button" className="card" style={{ textAlign: 'left', padding: 14, cursor: 'pointer' }}
+              onClick={() => onChoose(c.id)}>
+              <div style={{ fontWeight: 600 }}>{c.name}</div>
+              <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{c.code} · {c.roles.map((r) => r.name).join(', ') || 'Member'}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Routed() {
-  const { me, loading, can } = useAuth()
+  const { me, loading, can, needsCompanyChoice, switchCompany } = useAuth()
   if (loading) return <div className="empty">Loading…</div>
   if (!me) return <Login />
   if (!me.companies.length) return <div className="empty">Your account is not assigned to any company. Contact your administrator.</div>
+  if (needsCompanyChoice) return <CompanyChooser companies={me.companies} onChoose={switchCompany} />
   if (window.location.pathname.startsWith('/print/')) return <Routes><Route path="/print/:kind/:id" element={<Print />} /></Routes>
   // Route the user to the first module they actually have access to, rather than assuming
   // everyone can view invoices — e.g. an inventory- or sales-only role has neither.
