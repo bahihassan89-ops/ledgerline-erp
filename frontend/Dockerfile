@@ -1,4 +1,4 @@
-FROM node:22-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 # Baked into the JS bundle at build time (Vite only reads env vars at build, not at container
 # start). Empty by default -- Sentry.init() is skipped client-side when this is unset.
