@@ -21,12 +21,33 @@ class CompanyLiteSerializer(serializers.ModelSerializer):
 
 
 class CompanySerializer(serializers.ModelSerializer):
+    parent_name = serializers.CharField(source="parent.name", read_only=True, default=None)
+
     class Meta:
         model = Company
         fields = ["id", "name", "name_ar", "legal_name", "code", "tax_number", "registration_number", "tax_office",
                   "base_currency",
-                  "country", "address", "fiscal_year_start_month", "lock_date", "bill_price_tolerance_pct", "active"]
+                  "country", "address", "fiscal_year_start_month", "lock_date", "bill_price_tolerance_pct", "active",
+                  "parent", "parent_name", "ownership_pct", "consolidation_method"]
         read_only_fields = ["code", "base_currency", "active"]
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        parent = attrs.get("parent", getattr(self.instance, "parent", None))
+        pct = attrs.get("ownership_pct", getattr(self.instance, "ownership_pct", None))
+        if parent and pct is None:
+            raise serializers.ValidationError(
+                {"ownership_pct": "Required when a parent company is set, so NCI can be calculated."})
+        if parent and self.instance and parent.pk == self.instance.pk:
+            raise serializers.ValidationError({"parent": "A company cannot be its own parent."})
+        if parent and self.instance:
+            node, seen = parent, {self.instance.pk}
+            while node is not None:
+                if node.pk in seen:
+                    raise serializers.ValidationError({"parent": "Circular parent/subsidiary relationship detected."})
+                seen.add(node.pk)
+                node = node.parent
+        return attrs
 
     def validate_lock_date(self, value):
         old = self.instance.lock_date if self.instance else None

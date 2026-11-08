@@ -58,6 +58,12 @@ class CompanyState(models.TextChoices):
     REJECTED = "rejected", "Rejected"
 
 
+class ConsolidationMethod(models.TextChoices):
+    FULL = "full", "Full consolidation"
+    EQUITY = "equity", "Equity method"
+    NONE = "none", "Not consolidated"
+
+
 class Company(TimeStamped):
     name = models.CharField(max_length=200)
     name_ar = models.CharField(max_length=200, blank=True)
@@ -88,6 +94,29 @@ class Company(TimeStamped):
                                     related_name="+")
     approved_at = models.DateTimeField(null=True, blank=True)
     rejected_reason = models.CharField(max_length=255, blank=True)
+    # Group-structure fields for consolidation. `parent` is the immediate holding company;
+    # `ownership_pct` is the parent's economic interest in this company (drives the NCI
+    # split); `consolidation_method` tells the group-reports engine how to treat this entity
+    # when rolling it into a parent's consolidated statements.
+    parent = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="subsidiaries",
+        help_text="Immediate holding company, if this company is a subsidiary in a group.",
+    )
+    ownership_pct = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        help_text="Parent's ownership percentage in this company (0-100). Drives NCI calculation.",
+    )
+    consolidation_method = models.CharField(
+        max_length=10, choices=ConsolidationMethod.choices, default=ConsolidationMethod.FULL,
+        help_text="How this company is rolled up into its parent's consolidated statements.",
+    )
+    # System-generated, one per group (see apps.ledger.consolidation.elimination_company_for).
+    # Not a real legal entity: never shown in the company switcher, never gets a Membership, and
+    # exists purely so consolidation elimination entries are real, posted, auditable journal
+    # entries instead of a number computed on the fly in a report.
+    is_elimination_ledger = models.BooleanField(
+        default=False, editable=False,
+        help_text="System-generated group elimination ledger. Not a real operating company.")
 
     class Meta:
         verbose_name_plural = "companies"
@@ -95,6 +124,22 @@ class Company(TimeStamped):
 
     def __str__(self):
         return self.name
+
+    def clean(self):
+        super().clean()
+        if self.parent_id and self.parent_id == self.pk:
+            raise ValidationError("A company cannot be its own parent.")
+        if self.ownership_pct is not None and not (Decimal("0") < self.ownership_pct <= Decimal("100")):
+            raise ValidationError("ownership_pct must be between 0 and 100.")
+        if self.parent_id:
+            # Walk the parent chain to reject cycles (A -> B -> A).
+            seen = {self.pk}
+            node = self.parent
+            while node is not None:
+                if node.pk in seen:
+                    raise ValidationError("Circular parent/subsidiary relationship detected.")
+                seen.add(node.pk)
+                node = node.parent
 
 
 class CompanyScoped(TimeStamped):
