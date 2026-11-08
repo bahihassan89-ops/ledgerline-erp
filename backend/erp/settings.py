@@ -214,13 +214,19 @@ SPECTACULAR_SETTINGS = {
 ERP_MAX_FAILED_LOGINS = int(env("ERP_MAX_FAILED_LOGINS", "5"))
 ERP_LOCKOUT_MINUTES = int(env("ERP_LOCKOUT_MINUTES", "30"))
 # Roles at or above this level must have MFA enabled to log in.
-# Default is 1 (every role except the unassigned/no-role case) rather than only senior roles:
-# phishing a junior accountant's password is just as damaging to the books as phishing the CFO's.
-# Login still degrades gracefully: a user who hasn't enrolled yet is walked through TOTP setup
+# Default is 1 in production (every role except the unassigned/no-role case) rather than only senior
+# roles: phishing a junior accountant's password is just as damaging to the books as phishing the
+# CFO's. Login still degrades gracefully: a user who hasn't enrolled yet is walked through TOTP setup
 # instead of being locked out (see MfaSetupView), so this is safe to raise without a migration step.
+# Role levels only go up to 5 (see IAM Role.level), so any value above 5 disables the MFA requirement
+# entirely -- both auth_views.mfa_required() and LoginView treat it as "off", even for users who had
+# already enrolled before this was flipped. That's the dev/test default below, so the team isn't
+# fighting MFA logins while the ERP itself is still being built. Before go-live, set
+# ERP_MFA_REQUIRED_LEVEL=1 (or just unset it) in the prod env file -- the prod guard further down
+# refuses to start if it's left disabled there.
 # Trial installation: demo data only. The UI shows a banner warning against entering real data.
 ERP_TRIAL = env_bool("ERP_TRIAL", False)
-ERP_MFA_REQUIRED_LEVEL = int(env("ERP_MFA_REQUIRED_LEVEL", "1"))
+ERP_MFA_REQUIRED_LEVEL = int(env("ERP_MFA_REQUIRED_LEVEL", "1" if ERP_ENV == "prod" else "99"))
 ERP_PASSWORD_MAX_AGE_DAYS = int(env("ERP_PASSWORD_MAX_AGE_DAYS", "90"))
 
 # --- Web push (phone/browser notifications) --------------------------------
@@ -260,6 +266,9 @@ if ERP_ENV == "prod":
         raise RuntimeError("ERP_DEBUG must be off in production")
     if DATABASES["default"]["PASSWORD"] == "erp_dev_pw":
         raise RuntimeError("ERP_DB_PASSWORD must be set in production")
+    if ERP_MFA_REQUIRED_LEVEL > 5:
+        raise RuntimeError("ERP_MFA_REQUIRED_LEVEL disables MFA entirely (dev/test default) -- "
+                            "it must be left unset or set to 1-5 in production")
 
 LOGGING = {
     "version": 1,

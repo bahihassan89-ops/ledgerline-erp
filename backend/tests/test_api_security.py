@@ -67,6 +67,7 @@ def test_cannot_escalate_privileges(env, api):
 
 
 def test_login_lockout_and_mfa(env, settings):
+    settings.ERP_MFA_REQUIRED_LEVEL = 1  # pin the policy explicitly -- the dev/test default disables it
     cl = APIClient()
     for _ in range(settings.ERP_MAX_FAILED_LOGINS):
         assert cl.post("/api/auth/login/", {"username": "clerk", "password": "wrong"}).status_code == 401
@@ -88,7 +89,8 @@ def test_login_lockout_and_mfa(env, settings):
     assert cl.post("/api/auth/mfa/verify/", {"mfa_token": r.data["mfa_token"], "code": code}).status_code == 401
 
 
-def test_jwt_flow_and_refresh_rotation(env):
+def test_jwt_flow_and_refresh_rotation(env, settings):
+    settings.ERP_MFA_REQUIRED_LEVEL = 1  # pin the policy explicitly -- the dev/test default disables it
     cl = APIClient()
     r = cl.post("/api/auth/login/", {"username": "accountant", "password": PWD})
     # Every role now requires MFA (ERP_MFA_REQUIRED_LEVEL=1), so a first login walks through enrolment.

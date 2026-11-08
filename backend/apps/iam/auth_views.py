@@ -65,9 +65,14 @@ def _ctx_user(user):
 
 
 def mfa_required(user):
+    lvl = settings.ERP_MFA_REQUIRED_LEVEL
+    if lvl > 5:
+        # Globally disabled (dev/test default -- see ERP_MFA_REQUIRED_LEVEL in settings.py). This
+        # overrides everything below, including superuser and any already-enrolled user: while the
+        # policy is off, login must not challenge for or demand setup of a code at all.
+        return False
     if user.is_superuser:
         return True
-    lvl = settings.ERP_MFA_REQUIRED_LEVEL
     return user.memberships.filter(active=True, roles__level__gte=lvl, roles__active=True).exists()
 
 
@@ -125,9 +130,12 @@ class LoginView(APIView):
             return generic
         user.failed_login_count = 0
         user.save(update_fields=["failed_login_count"])
-        if user.mfa_enabled:
-            return Response({"mfa_required": True, "mfa_token": _mfa_token(user, "verify")})
+        # Policy decides first: if MFA isn't required right now (globally disabled, or this role is
+        # below the required level), log straight in -- even for a user who enrolled earlier under a
+        # stricter policy. Only once it's required do we branch on whether they've already enrolled.
         if mfa_required(user):
+            if user.mfa_enabled:
+                return Response({"mfa_required": True, "mfa_token": _mfa_token(user, "verify")})
             return Response({"mfa_setup_required": True, "mfa_token": _mfa_token(user, "setup")})
         return Response(_tokens(user, request))
 
