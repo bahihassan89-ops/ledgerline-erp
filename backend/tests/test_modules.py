@@ -1,6 +1,6 @@
 """Cheques, bank reconciliation, fixed assets, FX revaluation, returns, landed costs, budgets,
 recurring entries, imports, manufacturing, cash flow and the close checklist."""
-from datetime import timedelta
+from datetime import date, timedelta
 
 import pytest
 
@@ -132,6 +132,27 @@ def test_declining_balance_reaches_salvage(eg):
     assert total == D(90000)
     first = a.lines.first().amount
     assert first == D("3333.33")  # 100,000 × 40% / 12
+
+
+def test_straight_line_small_remainder_long_life_reaches_full_term(eg):
+    """Regression for a rounding bug: the old schedule used a constant rounded monthly amount plus a
+    final plug (depreciable - monthly * (remaining - 1)). Whenever rounding pushed the monthly amount
+    even a cent high, that excess compounded over many months and the final plug went negative, so it
+    was silently dropped (only `amt > 0` lines were kept) -- under-running the schedule by a period and
+    over-stating every prior month. Most visible on a small balance spread over a long life, which is
+    exactly a 10-year (120-month) furniture/fixtures asset nearing full depreciation. Before the fix this
+    produced 119 lines totalling 1.19 (19% over-depreciated) and stopped at 2035-11-30; it must now
+    telescope to exactly the depreciable base and reach December of the final year."""
+    cat = AssetCategory.objects.get(company=eg.c, name="Furniture & Fixtures")
+    a = Asset.objects.create(company=eg.c, code="FAX", name="Tiny remainder item", category=cat,
+                             acquisition_date=eg.d(1, 1), in_service_date=eg.d(1, 1), cost=D("1.00"),
+                             useful_life_months=120, method="straight_line")
+    fa.confirm(a, eg.cfo)
+    lines = list(a.lines.order_by("date"))
+    assert sum(l.amount for l in lines) == D("1.00")
+    assert all(l.amount > 0 for l in lines)
+    # 120 months from a January in-service date lands the final period in December, 9 years later.
+    assert lines[-1].date == date(a.in_service_date.year + 9, 12, 31)
 
 
 def test_tax_depreciation_pool(eg):

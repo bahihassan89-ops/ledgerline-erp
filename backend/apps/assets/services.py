@@ -80,11 +80,23 @@ def compute_schedule(asset):
     if depreciable <= 0 or remaining <= 0:
         return out
     if asset.method == Method.STRAIGHT_LINE:
-        monthly = round_to(depreciable / remaining, decimals)
+        # Round the *cumulative* target each month and post the increment over what's already in `out`,
+        # rather than a constant monthly amount plus a final plug. A constant rounded monthly amount
+        # drifts: whenever rounding pushes it even slightly high, that excess compounds every month, and
+        # by the last period the plug (depreciable - monthly * (remaining - 1)) goes negative and gets
+        # silently dropped by the `amt > 0` check below -- losing a period of depreciation and
+        # over-stating every month before it. That's most visible on small remaining balances spread over
+        # many months (e.g. an asset nearing the end of its life), and since every default category's
+        # useful life is a whole number of years starting in January, the dropped period is reliably the
+        # last one -- November or December. The cumulative method telescopes exactly to `depreciable` and
+        # each increment is guaranteed >= 0, since the running target never decreases.
+        cumulative = ZERO
         for i in range(remaining):
-            amt = monthly if i < remaining - 1 else depreciable - monthly * (remaining - 1)
+            target = round_to(depreciable * (i + 1) / remaining, decimals)
+            amt = target - cumulative
             if amt > 0:
                 out.append(DepreciationLine(asset=asset, date=add_months(start, i), amount=amt))
+                cumulative += amt
     else:
         rate = D(asset.declining_rate) / Decimal(1200)
         left = depreciable
