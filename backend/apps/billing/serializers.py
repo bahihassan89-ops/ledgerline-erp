@@ -46,6 +46,13 @@ class AllocationSerializer(serializers.ModelSerializer):
 class InvoiceSerializer(DocumentSerializer):
     line_model = InvoiceLine
     line_fk = "invoice"
+    # sales_line/purchase_line are set by create_refund() when a credit/debit note is first drafted and
+    # are read-only to the API (see InvoiceLineSerializer) -- without this, editing a draft return before
+    # posting it would silently null them out (DocumentSerializer._write_lines deletes and recreates every
+    # line), and _process_return() then rejects the return at post time for looking like it has no
+    # originating order line, which also blocks partial returns from validating against qty_delivered/
+    # qty_received.
+    preserve_line_fields = ("sales_line", "purchase_line")
     lines = InvoiceLineSerializer(many=True)
     partner_name = serializers.CharField(source="partner.name", read_only=True)
     entry_number = serializers.CharField(source="journal_entry.number", read_only=True, default=None)

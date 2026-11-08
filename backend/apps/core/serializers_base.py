@@ -49,11 +49,25 @@ class DocumentSerializer(CompanyScopedSerializer):
     document is in draft."""
     line_model = None
     line_fk = None
+    # Fields on `line_model` that a client can never set directly (they're populated by a service when
+    # the line is first created -- e.g. a refund line's `sales_line`/`purchase_line` back-reference to the
+    # originating order line) but that must survive a later edit of the document. On update, matched by
+    # the incoming line's `id` against the line it's replacing and copied across before the old line is
+    # deleted. Subclasses opt in by overriding this; plain lines (no `id` match, e.g. newly added ones)
+    # simply don't get a value, same as today.
+    preserve_line_fields = ()
 
     def _write_lines(self, doc, lines):
+        old_by_id = {}
+        if self.preserve_line_fields and self.instance is not None:
+            old_by_id = {ln.pk: ln for ln in doc.lines.all()}
         doc.lines.all().delete()
         for i, data in enumerate(lines):
-            data.pop("id", None)
+            old_id = data.pop("id", None)
+            old = old_by_id.get(old_id)
+            if old is not None:
+                for f in self.preserve_line_fields:
+                    data.setdefault(f, getattr(old, f))
             self.line_model.objects.create(**{self.line_fk: doc}, sequence=i, **data)
 
     @transaction.atomic

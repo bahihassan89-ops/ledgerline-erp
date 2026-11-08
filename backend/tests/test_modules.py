@@ -199,6 +199,40 @@ def test_customer_return_to_stock(eg):
     assert t["510101"] == D(1200) and t["110301"] == D(2800)  # COGS 3 × 400 remains
 
 
+def test_editing_draft_return_keeps_order_line_link(eg):
+    """A credit note is drafted with sales_line set by create_refund(); editing it (as the UI does to
+    set the actual returned quantity) must not null that FK out, or the post-time partial-return check
+    in _process_return() rejects it as having no originating order line."""
+    from rest_framework.test import APIClient
+    _receive(eg, eg.item, 10, 400, (2, 1))
+    so = SalesOrder.objects.create(company=eg.c, partner=eg.customer, date=eg.d(2, 5), currency_id="EGP",
+                                   warehouse=eg.wh)
+    SalesOrderLine.objects.create(order=so, product=eg.item, quantity=5, unit_price=1000, tax=eg.T["VAT14-S"])
+    sales.confirm(so, eg.accountant)
+    sales.deliver(so, eg.accountant, on_date=eg.d(2, 6))
+    inv = billing.post_invoice(sales.create_invoice(so, eg.accountant, eg.d(2, 6)), eg.accountant)
+    cn = billing.create_refund(inv, eg.cfo, reason="units returned", return_to_stock=True)
+    ln = cn.lines.first()
+    assert ln.sales_line_id is not None
+
+    cl = APIClient()
+    cl.force_authenticate(eg.cfo)
+    cl.credentials(HTTP_X_COMPANY=str(eg.c.pk))
+    payload = {"lines": [{"id": ln.pk, "product": ln.product_id, "description": ln.description,
+                          "account": ln.account_id, "quantity": "2", "unit_price": str(ln.unit_price),
+                          "tax": ln.tax_id}]}
+    r = cl.patch(f"/api/invoices/{cn.pk}/", payload, format="json")
+    assert r.status_code == 200, r.content
+
+    # _write_lines() deletes and recreates the line row (even when preserving FKs onto it), so re-fetch
+    # rather than refresh_from_db() on the now-deleted original row.
+    new_ln = cn.lines.get()
+    assert new_ln.sales_line_id is not None  # not dropped by the edit
+    assert new_ln.quantity == D(2)
+    billing.post_invoice(cn, eg.cfo)  # would raise return_without_order before the fix
+    assert ProductValuation.objects.get(product=eg.item).quantity == D(7)
+
+
 def test_vendor_return_to_stock(eg):
     po = PurchaseOrder.objects.create(company=eg.c, partner=eg.vendor, date=eg.d(2, 1), currency_id="EGP",
                                       warehouse=eg.wh)
