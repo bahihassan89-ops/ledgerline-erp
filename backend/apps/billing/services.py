@@ -653,8 +653,13 @@ def generate_instalment_cheques(plan, user, cheque_numbers=None, cheque_bank="")
     `cheque_numbers`, if given, must have one entry per instalment (the real numbers off the
     physical post-dated cheques collected at signing); otherwise a placeholder "PDC-<plan>-<n>" is
     used and should be corrected once the actual cheques are in hand."""
+    # `invoice` is a nullable FK -- select_related("invoice") turns this into a LEFT OUTER JOIN, and
+    # Postgres refuses "SELECT ... FOR UPDATE" across the nullable side of an outer join
+    # (FeatureNotSupported), so it must stay out of this particular select_related. plan.invoice is
+    # still used below (line ~678) -- without the join Django just issues one extra SELECT for it
+    # the first time it's accessed, which is harmless; only the locked row itself needs no join.
     plan = ChequeInstalmentPlan.objects.select_for_update().select_related("company", "partner", "journal",
-                                                                           "invoice", "currency").get(pk=plan.pk)
+                                                                           "currency").get(pk=plan.pk)
     if plan.state != "draft":
         raise BusinessError("This plan has already been generated.", "already_generated")
     if plan.number_of_instalments < 1:
