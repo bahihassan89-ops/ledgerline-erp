@@ -77,6 +77,14 @@ class Account(CompanyScoped):
     requires_cost_center = models.BooleanField(default=False)
     description = models.TextField(blank=True)
     active = models.BooleanField(default=True)
+    # Intercompany tracking at the GL-account level, mirroring Partner.is_intercompany /
+    # linked_company. Lets the consolidation engine find due-to/due-from, investment-in-
+    # subsidiary and IC revenue/cost accounts without guessing from the account code.
+    is_intercompany = models.BooleanField(
+        default=False, help_text="Balances on this account are intercompany and must be eliminated on consolidation.")
+    ic_counterparty = models.ForeignKey(
+        Company, null=True, blank=True, on_delete=models.PROTECT, related_name="+",
+        help_text="The related group company on the other side of this intercompany account.")
 
     class Meta:
         unique_together = [("company", "code")]

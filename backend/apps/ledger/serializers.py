@@ -15,7 +15,8 @@ class AccountSerializer(CompanyScopedSerializer):
         model = Account
         fields = ["id", "code", "name", "name_ar", "parent", "parent_code", "account_class", "account_type", "level",
                   "is_group", "cash_flow_category",
-                  "reconcilable", "is_control", "currency", "requires_cost_center", "description", "active"]
+                  "reconcilable", "is_control", "currency", "requires_cost_center", "description", "active",
+                  "is_intercompany", "ic_counterparty"]
         read_only_fields = ["level"]
 
     def validate(self, attrs):
