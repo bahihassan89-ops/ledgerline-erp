@@ -153,6 +153,22 @@ def create_fiscal_year(company, start_year: int, user=None) -> FiscalYear:
     return fy
 
 
+def _check_intercompany_reconciled(company, as_of):
+    """Block a close/lock if any of this company's intercompany partners are out of balance with
+    their mirror record (or have no mirror at all) as of the close date -- per the FC's go-live
+    requirement: a mandatory partner code, a mirror entry, a reconciliation report and a lock
+    before close. Same gate pattern as the draft-entries / earlier-open-period checks below."""
+    from apps.ledger import reports
+    ic = reports.intercompany_reconciliation(as_of, company=company)
+    bad = [r for r in ic["rows"] if not r["reconciled"]]
+    if bad:
+        no_mirror = sum(1 for r in bad if r["mirror_partner_id"] is None)
+        detail = f"{len(bad)} intercompany partner(s) are not reconciled with their mirror as of {as_of}"
+        if no_mirror:
+            detail += f" ({no_mirror} have no mirror record in the linked company)"
+        raise BusinessError(detail + ".", "intercompany_unreconciled")
+
+
 def set_period_state(period, state, user):
     perms = user.permissions_for(period.company_id)
     if period.state == PeriodState.LOCKED:
@@ -165,6 +181,7 @@ def set_period_state(period, state, user):
                                                    state=PeriodState.OPEN).exists()
         if earlier_open:
             raise BusinessError("Close all earlier periods before locking this one.", "earlier_open")
+        _check_intercompany_reconciled(period.company, period.end_date)
     if state in (PeriodState.CLOSED, PeriodState.LOCKED):
         drafts = JournalEntry.objects.filter(company_id=period.company_id, state=EntryState.DRAFT,
                                              date__gte=period.start_date, date__lte=period.end_date).count()
@@ -368,6 +385,7 @@ def close_fiscal_year(fy, user) -> JournalEntry | None:
                                          date__gte=fy.start_date, date__lte=fy.end_date).count()
     if drafts:
         raise BusinessError(f"{drafts} draft entries exist in this year.", "drafts_in_year")
+    _check_intercompany_reconciled(company, fy.end_date)
     st = settings_for(company)
     re_acc = require_account(st.retained_earnings_account, "retained earnings")
     journal = journal_for(company, "closing_journal", "closing")

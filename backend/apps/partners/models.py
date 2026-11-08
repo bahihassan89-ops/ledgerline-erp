@@ -65,6 +65,12 @@ class Partner(CompanyScoped):
     linked_company = models.ForeignKey("core.Company", null=True, blank=True, on_delete=models.SET_NULL,
                                        related_name="intercompany_partners",
                                        help_text="The group company this partner record corresponds to")
+    # Explicit, bidirectional link to the mirroring Partner row kept in linked_company's own books
+    # (the record that represents *us* in their ledger). Set automatically by
+    # apps.partners.services.sync_intercompany_mirror() -- never guessed at report time, so the
+    # reconciliation report and the pre-close lock can both rely on it actually existing.
+    mirror_partner = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL, related_name="+",
+                                       help_text="The matching partner record in the linked company's own books")
 
     class Meta:
         unique_together = [("company", "code")]

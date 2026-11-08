@@ -116,6 +116,14 @@ def run(company, period):
     tb = reports.trial_balance(company, start, end)
     out.append(_item("tb", "Trial balance balances", "ok" if tb["balanced"] else "fail",
                      f"Debits {tb['totals']['debit']} / credits {tb['totals']['credit']}", None, "/reports"))
+    ic = reports.intercompany_reconciliation(end, company=company)
+    ic_bad = [r for r in ic["rows"] if not r["reconciled"]]
+    ic_no_mirror = sum(1 for r in ic_bad if r["mirror_partner_id"] is None)
+    out.append(_item("intercompany", "Intercompany balances reconciled with the counterparty",
+                     "ok" if not ic_bad else "fail",
+                     (f"{ic_no_mirror} partner(s) have no mirror record in the linked company; " if ic_no_mirror else "") +
+                     f"{len(ic_bad)} of {len(ic['rows'])} intercompany partner(s) out of balance with their mirror",
+                     len(ic_bad), "/reports?r=intercompany-reconciliation"))
     summary = {s: sum(1 for i in out if i["status"] == s) for s in ("ok", "warn", "fail")}
     return {"period": {"id": period.pk, "name": period.name, "start": start, "end": end, "state": period.state},
             "items": out, "summary": summary, "ready_to_close": summary["fail"] == 0}

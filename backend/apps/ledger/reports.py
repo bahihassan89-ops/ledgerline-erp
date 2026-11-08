@@ -369,34 +369,49 @@ def petty_cash_register(company, as_of):
     return {"as_of": as_of, "rows": rows}
 
 
-def intercompany_reconciliation(as_of):
+def intercompany_reconciliation(as_of, company=None):
     """Every intercompany partner link (Partner.is_intercompany + linked_company), shown from
     both sides: the open AR/AP balance this company carries against the partner record that
-    represents the other company, and -- where that other company has a mirroring partner record
-    pointing back -- its balance too, so a controller can see at a glance whether the two sides
-    agree. This is a reconciliation aid only: no elimination entry is posted anywhere (the same
-    policy as branch_income_statement() for inter-branch balances -- nothing here is eliminated
-    automatically)."""
-    from apps.billing.services import aging
+    represents the other company, and its mirror's balance, so a controller can see at a glance
+    whether the two sides agree. This is a reconciliation aid only: no elimination entry is
+    posted anywhere (the same policy as branch_income_statement() for inter-branch balances --
+    nothing here is eliminated automatically).
+
+    The mirror is Partner.mirror_partner -- a real, explicit FK kept in sync by
+    apps.partners.services.sync_intercompany_mirror() whenever an intercompany partner is saved,
+    not guessed here by reverse-matching company/linked_company as earlier versions did. A row
+    with mirror_partner_id == None means the counterparty-side record genuinely doesn't exist yet
+    (sync failed, or the partner was created before this was enforced) -- that's a real gap to
+    flag, not just report-time noise.
+
+    Pass `company` to scope to one company's own intercompany partners (used by the close
+    checklist / period-lock gate); omit it for the cross-group GlobalReportView.
+
+    The balance is read straight from posted GL lines on the partner's receivable/payable accounts
+    (same source as PartnerViewSet.statement()), not from apps.billing.aging(). aging() only knows
+    about Invoice/Payment documents and their Allocations -- it silently drops any manual journal
+    entry posted directly against the partner (opening balances, write-offs, FX revaluation,
+    corrections), which is exactly the kind of entry that causes two intercompany books to quietly
+    drift apart. debit - credit across both account types already carries the right sign (positive
+    = partner owes us; negative = we owe the partner), so no separate receivable/payable split is
+    needed here."""
     from apps.partners.models import Partner
 
     def partner_balance(partner):
-        bal = ZERO
-        for kind, sign in (("receivable", 1), ("payable", -1)):
-            row = next((r for r in aging(partner.company, kind, as_of)["rows"] if r["partner_id"] == partner.pk),
-                       None)
-            if row:
-                bal += sign * Decimal(row["total"])
-        return bal
+        agg = JournalLine.objects.filter(company_id=partner.company_id, partner_id=partner.pk, posted=True,
+                                         date__lte=as_of, account__account_type__in=["receivable", "payable"]
+                                         ).aggregate(d=Sum("debit"), c=Sum("credit"))
+        return (agg["d"] or ZERO) - (agg["c"] or ZERO)
 
     links = Partner.objects.filter(is_intercompany=True, linked_company__isnull=False).select_related(
-        "company", "linked_company")
+        "company", "linked_company", "mirror_partner", "mirror_partner__company")
+    if company is not None:
+        links = links.filter(company=company)
     seen, rows = set(), []
     for p in links:
         if p.pk in seen:
             continue
-        mirror = Partner.objects.filter(company=p.linked_company_id, linked_company=p.company_id,
-                                        is_intercompany=True).select_related("company").first()
+        mirror = p.mirror_partner
         seen.add(p.pk)
         if mirror:
             seen.add(mirror.pk)

@@ -11,6 +11,7 @@ from apps.ledger.views import parse_date
 
 from .models import Partner, PaymentTerm
 from .serializers import PartnerSerializer, PaymentTermSerializer
+from .services import sync_intercompany_mirror
 
 
 class PaymentTermViewSet(CompanyViewSet):
@@ -30,10 +31,12 @@ class PartnerViewSet(CompanyViewSet):
 
     def perform_create(self, serializer):
         p = serializer.save(company=self.company, created_by=self.request.user)
+        sync_intercompany_mirror(p)
         emit(self.company, "partner.created", PartnerSerializer(p).data)
 
     def perform_update(self, serializer):
         p = serializer.save()
+        sync_intercompany_mirror(p)
         emit(self.company, "partner.updated", PartnerSerializer(p).data)
 
     def perform_destroy(self, instance):

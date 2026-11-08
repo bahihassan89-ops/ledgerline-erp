@@ -4,6 +4,7 @@ Node: (code, name_en, name_ar, type, children-or-flags...). Root nodes also carr
 """
 
 C = "control"
+IC = "intercompany"
 
 CHART = [
     ("1", "Assets", "الأصول", "group", "asset", [
@@ -23,6 +24,7 @@ CHART = [
                  "notes_receivable", C),
                 ("110206", "Taxes Withheld by Customers", "ضرائب خصم من المنبع لدى العملاء (خصم وإضافة)",
                  "wht_receivable", C),
+                ("110207", "Due from Related Companies", "مستحق من شركات ذات علاقة", "current_asset", IC),
             ]),
             ("1103", "Inventories", "المخزون", "group", [
                 ("110301", "Inventory — Finished Goods / Merchandise", "مخزون البضاعة التامة / بضاعة بغرض البيع",
@@ -61,6 +63,12 @@ CHART = [
                 ("120301", "Software and Licences", "برامج وتراخيص", "non_current_asset"),
                 ("120302", "Accumulated Amortisation", "مجمع الاستهلاك", "accumulated_depreciation"),
             ]),
+            ("1204", "Investments in Group Companies", "استثمارات في شركات المجموعة", "group", [
+                # Carries the parent's cost of its stake in a subsidiary; eliminated against the
+                # subsidiary's equity (capital + reserves + retained earnings) on consolidation.
+                ("120401", "Investment in Subsidiaries", "استثمارات في شركات تابعة", "non_current_asset", IC),
+                ("120402", "Investment in Associates", "استثمارات في شركات زميلة", "non_current_asset", IC),
+            ]),
         ]),
     ]),
     ("2", "Liabilities", "الالتزامات", "group", "liability", [
@@ -71,6 +79,7 @@ CHART = [
                 ("210103", "Notes Payable — Cheques Issued", "أوراق الدفع — شيكات صادرة", "notes_payable", C),
                 ("210104", "Landed Costs Clearing", "حساب وسيط تكاليف الاستيراد", "current_liability"),
                 ("210105", "Subcontracting Clearing", "حساب وسيط تصنيع لدى الغير", "current_liability"),
+                ("210106", "Due to Related Companies", "مستحق لشركات ذات علاقة", "current_liability", IC),
             ]),
             ("2102", "Accruals", "مصروفات مستحقة", "group", [
                 ("210201", "Accrued Salaries and Wages", "أجور ومرتبات مستحقة", "current_liability"),
@@ -109,6 +118,11 @@ CHART = [
                 ("310201", "Legal Reserve", "الاحتياطي القانوني", "equity"),
                 ("310202", "General Reserve", "احتياطي عام", "equity"),
             ]),
+            # Group-consolidation-only: the portion of a non-wholly-owned subsidiary's equity
+            # not attributable to the parent. Only ever posted to by the elimination engine.
+            ("3103", "Non-Controlling Interests", "حقوق الملكية غير المسيطرة", "group", [
+                ("310301", "Non-Controlling Interests", "حقوق الملكية غير المسيطرة", "equity", IC),
+            ]),
         ]),
         ("32", "Retained Earnings", "الأرباح المرحلة", "group", [
             ("3201", "Accumulated Results", "نتائج الأعمال المتراكمة", "group", [
@@ -124,6 +138,10 @@ CHART = [
                 ("410102", "Sales — Services", "إيرادات خدمات", "revenue"),
                 ("410103", "Sales Returns and Allowances", "مردودات ومسموحات المبيعات", "revenue"),
                 ("410104", "Export Sales", "مبيعات تصدير", "revenue"),
+                # Sales to another company in the same group. Kept separate from ordinary Sales
+                # so the consolidation engine can find and eliminate 100% of it by account, not
+                # by trying to detect intercompany transactions after the fact.
+                ("410105", "Intercompany Sales", "مبيعات بين شركات المجموعة", "revenue", IC),
             ]),
         ]),
         ("42", "Other Income", "إيرادات أخرى", "group", [
@@ -134,6 +152,7 @@ CHART = [
                 ("420104", "Unrealised Foreign Exchange Gain", "أرباح فروق عملة غير محققة (إعادة تقييم)",
                  "other_income"),
                 ("420105", "Interest Income", "فوائد دائنة", "other_income"),
+                ("420106", "Intercompany Interest Income", "فوائد دائنة من شركات المجموعة", "other_income", IC),
             ]),
         ]),
     ]),
@@ -143,6 +162,10 @@ CHART = [
                 ("510101", "Cost of Goods Sold", "تكلفة البضاعة المباعة", "cost_of_sales"),
                 ("510102", "Purchase Price Variance", "فروق أسعار المشتريات", "cost_of_sales"),
                 ("510103", "Inventory Adjustments and Shrinkage", "فروق جرد وتسويات المخزون", "cost_of_sales"),
+                # Mirror of 410105 Intercompany Sales -- lets the elimination engine net
+                # intercompany revenue against intercompany cost of sales by account, and
+                # restate any unsold stock at group (not intercompany) cost.
+                ("510104", "Intercompany Cost of Sales", "تكلفة مبيعات بين شركات المجموعة", "cost_of_sales", IC),
             ]),
             ("5102", "Production Costs", "تكاليف الإنتاج", "group", [
                 ("510201", "Direct Labour — Actual", "الأجور المباشرة الفعلية", "cost_of_sales"),
@@ -193,6 +216,7 @@ CHART = [
                 ("530104", "Loss on Disposal of Fixed Assets", "خسائر رأسمالية (بيع أصول ثابتة)", "other_expense"),
                 ("530105", "Unrealised Foreign Exchange Loss", "خسائر فروق عملة غير محققة (إعادة تقييم)",
                  "other_expense"),
+                ("530106", "Intercompany Interest Expense", "فوائد مدينة لشركات المجموعة", "other_expense", IC),
             ]),
         ]),
     ]),

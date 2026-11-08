@@ -112,7 +112,7 @@ def sync_chart(company):
         a = by_code.get(code)
         if a is None:
             a = Account(company=company, code=code, name=name, name_ar=name_ar, parent=parent, account_class=cls,
-                        account_type=typ, is_control="control" in flags)
+                        account_type=typ, is_control="control" in flags, is_intercompany="intercompany" in flags)
             a.clean()
             a.save()
             by_code[code] = a
