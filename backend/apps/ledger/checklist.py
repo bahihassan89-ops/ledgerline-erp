@@ -88,6 +88,22 @@ def run(company, period):
                                             order__date__lte=old).exclude(qty_billed__gte=F("qty_received")).count()
     out.append(_item("grni", "Goods received over 60 days ago and not yet billed", "ok" if not grni else "warn",
                      f"{grni} purchase-order lines (accrue or chase the vendor)", grni, "/purchase-orders"))
+    # Non-resident withholding (Income Tax Law 91/2005 art. 56: payments to a non-resident with no
+    # permanent establishment in Egypt are subject to withholding, commonly cited at 20% but subject
+    # to treaty reduction and to confirmation of the exact rate/ETA code by the tax advisor -- see the
+    # EGYPT_TAXES comment in apps/core/management/commands/setup_company.py). We deliberately do not
+    # auto-apply a rate or guess which vendors are "non-resident" (a foreign address does not by
+    # itself mean no permanent establishment); this is a non-blocking reminder only, so the Controller
+    # can check with the tax advisor and, once confirmed, add the tax code under Settings -> Taxes
+    # (any WHT category can be added there: see ledger.tax.manage).
+    foreign_bills = Invoice.objects.filter(company=company, move_type="in_invoice", state="posted",
+                                           date__gte=start, date__lte=end).exclude(partner__country="") \
+        .exclude(partner__country="EG").exclude(lines__withholding_tax__isnull=False).distinct().count()
+    out.append(_item("nonresident_wht", "Foreign-vendor bills with no withholding tax applied",
+                     "ok" if not foreign_bills else "warn",
+                     f"{foreign_bills} bill(s) from a non-Egyptian vendor with no WHT line -- confirm with the "
+                     "tax advisor whether non-resident withholding (art. 56) applies" if foreign_bills else
+                     "No foreign-vendor bills without withholding this period", foreign_bills, "/invoices"))
     try:
         pending_fx = sum(len(v) for v in preview(company, end).values())
     except Exception:  # missing exchange rate

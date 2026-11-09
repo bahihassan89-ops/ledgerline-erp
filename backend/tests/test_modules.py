@@ -19,6 +19,7 @@ from apps.ledger import services as gl
 from apps.ledger.models import FiscalYear, JournalEntry
 from apps.manufacturing import services as mrp
 from apps.manufacturing.models import Bom, BomComponent, BomOperation, ManufacturingOrder, WorkCenter
+from apps.partners.models import Partner
 from apps.planning.models import Budget, RecurringEntry
 from apps.planning.services import budget_vs_actual, run_due, set_budget_lines
 from apps.purchasing import services as purchasing
@@ -514,3 +515,45 @@ def test_close_checklist_fx_balances_ok_when_no_negative_fx(eg):
     res = run(eg.c, FiscalPeriod.objects.get(company=eg.c, number=1))
     items = {i["key"]: i for i in res["items"]}
     assert items["fx_balances"]["status"] == "ok" and items["fx_balances"]["count"] == 0
+
+
+def test_close_checklist_warns_on_foreign_vendor_bill_without_withholding(eg):
+    # Item #23: a non-resident vendor may be subject to withholding (Income Tax Law 91/2005 art. 56),
+    # but we deliberately don't know the confirmed rate/ETA code (see setup_company.py EGYPT_TAXES),
+    # so this is a non-blocking reminder rather than an automatic withholding or a hard block.
+    from apps.ledger.checklist import run
+    from apps.ledger.models import FiscalPeriod
+    foreign = Partner.objects.create(company=eg.c, code="FV1", name="Gulf Consulting LLC", is_vendor=True,
+                                     country="AE")
+    b = Invoice.objects.create(company=eg.c, move_type="in_invoice", partner=foreign, currency_id="EGP",
+                               date=eg.d(1, 10), reference="FB-1")
+    InvoiceLine.objects.create(invoice=b, description="Consulting", account=eg.A["520203"], quantity=1,
+                               unit_price=D(1000), tax=eg.T["VAT14-P"])
+    billing.post_invoice(b, eg.accountant)
+    res = run(eg.c, FiscalPeriod.objects.get(company=eg.c, number=1))
+    items = {i["key"]: i for i in res["items"]}
+    assert items["nonresident_wht"]["status"] == "warn" and items["nonresident_wht"]["count"] == 1
+    assert res["ready_to_close"]  # warn never blocks the close
+
+
+def test_close_checklist_nonresident_wht_ok_when_withheld_or_domestic(eg):
+    from apps.ledger.checklist import run
+    from apps.ledger.models import FiscalPeriod
+    # Foreign vendor, but withholding was applied on the bill -> not flagged.
+    foreign = Partner.objects.create(company=eg.c, code="FV2", name="Levant Supplies", is_vendor=True,
+                                     country="LB")
+    b1 = Invoice.objects.create(company=eg.c, move_type="in_invoice", partner=foreign, currency_id="EGP",
+                                date=eg.d(1, 10), reference="FB-2")
+    InvoiceLine.objects.create(invoice=b1, description="Supplies", account=eg.A["520203"], quantity=1,
+                               unit_price=D(1000), tax=eg.T["VAT14-P"], withholding_tax=eg.T["WHT1-SUP-P"])
+    billing.post_invoice(b1, eg.accountant)
+    # Domestic (Egyptian) vendor with no withholding -> not flagged (this check is about residency,
+    # not about the EGP 300 threshold already covered by test_withholding_threshold).
+    bill_egypt = Invoice.objects.create(company=eg.c, move_type="in_invoice", partner=eg.vendor,
+                                        currency_id="EGP", date=eg.d(1, 11), reference="FB-3")
+    InvoiceLine.objects.create(invoice=bill_egypt, description="Local services", account=eg.A["520203"],
+                               quantity=1, unit_price=D(1000), tax=eg.T["VAT14-P"])
+    billing.post_invoice(bill_egypt, eg.accountant)
+    res = run(eg.c, FiscalPeriod.objects.get(company=eg.c, number=1))
+    items = {i["key"]: i for i in res["items"]}
+    assert items["nonresident_wht"]["status"] == "ok" and items["nonresident_wht"]["count"] == 0
