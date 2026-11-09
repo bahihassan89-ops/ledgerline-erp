@@ -287,13 +287,17 @@ class MeView(APIView):
         # same check used elsewhere, e.g. UserSerializer.validate_global_role_ids) both get an
         # overview of every active company even without a per-company Membership, so they can see
         # and switch between all companies on the platform. This only fires as a fallback when the
-        # account has no explicit memberships of its own.
+        # account has no explicit memberships of its own. The group elimination ledger is excluded
+        # here too -- it is a system-generated posting target, not a real company a user can work
+        # in, and never gets a Membership in the first place (so it would otherwise only ever
+        # surface through this fallback path).
         if (u.is_superuser or u.has_global_perm("company.activate")) and not companies:
             from apps.core.models import Company
             from .permissions_catalog import CATALOG
             companies = [{"id": c.pk, "name": c.name, "code": c.code, "base_currency": c.base_currency_id,
                           "is_default": False, "roles": [], "level": 5, "approval_limit": None,
-                          "permissions": sorted(CATALOG)} for c in Company.objects.filter(active=True)]
+                          "permissions": sorted(CATALOG)}
+                         for c in Company.objects.filter(active=True, is_elimination_ledger=False)]
         return Response({"id": u.pk, "username": u.username, "email": u.email,
                          "full_name": u.get_full_name() or u.username, "mfa_enabled": u.mfa_enabled,
                          "is_superuser": u.is_superuser, "must_change_password": u.must_change_password,

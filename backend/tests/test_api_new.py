@@ -4,7 +4,8 @@ from rest_framework.test import APIClient
 from apps.billing import services as billing
 from apps.billing.models import Invoice, InvoiceLine
 
-from .conftest import make_user
+from .conftest import PWD, make_user
+from apps.iam.models import User
 
 
 def client(env, user):
@@ -84,3 +85,37 @@ def test_attachments(eg):
     assert client(eg, auditor).get(f"/api/attachments/?object_type=billing.invoice&object_id={inv.pk}").status_code == 200
     admin = make_user(eg.c, "eg_admin", "System Administrator")
     assert client(eg, admin).get(f"/api/attachments/{aid}/download/").status_code == 403
+
+
+def test_elimination_ledger_company_excluded_from_lite_list(eg):
+    # Item #20: the system-generated group elimination ledger (Company.is_elimination_ledger)
+    # is not a real legal entity -- it must never appear in the intercompany-partner picker
+    # (CompanyLiteViewSet, mounted at /api/companies/) even though it is state=ACTIVE/active=True
+    # like any other company.
+    from apps.core.models import Company
+    elim = Company.objects.create(name="Group Elimination Ledger", code="elim", base_currency_id="EGP",
+                                  is_elimination_ledger=True)
+    cl = client(eg, eg.cfo)
+    r = cl.get("/api/companies/")
+    assert r.status_code == 200
+    codes = {row["code"] for row in r.data}
+    assert "nile" in codes and "elim" not in codes
+    assert elim.pk not in {row["id"] for row in r.data}
+
+
+def test_elimination_ledger_company_excluded_from_superuser_switcher(eg):
+    # Item #20 continued: MeView's superuser/CEO fallback (fires when the account has no
+    # per-company Membership) lists every active company for the switcher dropdown -- the
+    # elimination ledger never gets a Membership by convention, so without this exclusion it
+    # would only ever surface through this fallback path.
+    from apps.core.models import Company
+    Company.objects.create(name="Group Elimination Ledger", code="elim", base_currency_id="EGP",
+                           is_elimination_ledger=True)
+    su = User.objects.create_superuser(username="root", email="root@t.local", password=PWD)
+    cl = APIClient()
+    cl.force_authenticate(su)
+    cl.credentials(HTTP_X_COMPANY=str(eg.c.pk))
+    r = cl.get("/api/auth/me/")
+    assert r.status_code == 200
+    codes = {row["code"] for row in r.data["companies"]}
+    assert "nile" in codes and "elim" not in codes

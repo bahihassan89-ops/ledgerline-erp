@@ -44,8 +44,9 @@ class CompanyLiteViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
     """Read-only list of every active company in the install (id/code/name only, no financial
     data) -- not scoped by X-Company, since by definition it needs to show companies other than
     the caller's own. Used by the partner form to pick Partner.linked_company when marking a
-    partner as intercompany."""
-    queryset = Company.objects.filter(state=CompanyState.ACTIVE).order_by("name")
+    partner as intercompany. Excludes the system-generated group elimination ledger: it is not a
+    real legal entity and cannot be an intercompany partner."""
+    queryset = Company.objects.filter(state=CompanyState.ACTIVE, is_elimination_ledger=False).order_by("name")
     serializer_class = CompanyLiteSerializer
     permission_classes = [ErpPermission]
     perms = {"list": "authenticated"}
