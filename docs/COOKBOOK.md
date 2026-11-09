@@ -517,7 +517,8 @@ retention window; the sub-text on the page states plainly if no cloud destinatio
 nobody assumes backups are leaving the server when they aren't.
 
 **No cloud destination is configured yet** — backups are encrypted and kept on the server, pruned
-automatically (14 daily + 1/month for 12 months). The architecture is ready to add one (push from the
+automatically (14 daily + 1/month for 60 months by default, matching the 5-year retention required
+for accounting books and e-invoices under Law 206/2020). The architecture is ready to add one (push from the
 end of `deploy/backup/backup.sh`, after encryption — see the comment at the top of that file) the
 moment a destination (S3, Backblaze, a second server, etc.) is chosen; until then, **copy backups off
 the server yourself** — see `OPERATIONS.md` §3 for the `rclone`/`rsync` one-liners. A backup that only

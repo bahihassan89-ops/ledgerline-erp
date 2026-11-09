@@ -431,7 +431,14 @@ Permissions (75) are fine-grained codes; roles bundle them with a **managerial l
 * **Attachments** (PDF, images, Excel, Word, CSV; ≤10 MB; content checked against the extension;
   SHA-256 fingerprint) on invoices, bills, payments, entries, orders, assets, statements and landed
   costs. Downloaded only through the authenticated API. Attachments of posted records **cannot be deleted**.
-* Retain books, documents and e-invoices for the period required by law ⚖ verify (Unified Tax Procedures Law 206/2020 and the Commercial Law). Back up the database with point-in-time recovery and keep the audit log in write-once storage.
+* Retain books, documents and e-invoices for 5 years from the end of the tax period they relate
+  to -- the minimum period under the Unified Tax Procedures Law 206/2020, matched by the
+  Commercial Law 17/1999's own 5-year retention period for commercial books and correspondence,
+  so the two do not conflict. There is no in-app deletion of posted invoices, bills, payments or
+  journal entries (no such endpoint exists), and attachments evidencing a posted/approved document
+  cannot be deleted either (see section above). The encrypted daily/monthly backup (`deploy/backup/backup.sh`,
+  `BACKUP_KEEP_MONTHS`) keeps 5 years of monthly archives by default so a database-loss disaster
+  cannot shorten the retained history below the legal minimum.
 
 ## 20. Go-live: migrating from the previous system
 
@@ -464,7 +471,7 @@ Templates for every CSV are downloadable from the Imports page. A spreadsheet jo
 | Art. 27 accelerated 30% first-year deduction | Not applied | Manual adjustment |
 | VAT return filing deadline / form | Monthly working paper | — |
 | Form 41 deadline | Quarterly (end of month following the quarter) | — |
-| Record retention period | — | Policy |
+| Record retention period | 5 years (Law 206/2020 and Commercial Law 17/1999) | `BACKUP_KEEP_MONTHS` in `.env` |
 | Corporate income tax rate | Not automated (accounts provided) | Manual entry |
 
 ## 22. Known limitations and roadmap

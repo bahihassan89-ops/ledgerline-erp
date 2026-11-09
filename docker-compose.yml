@@ -110,7 +110,7 @@ services:
       BACKUP_PASSPHRASE: ${BACKUP_PASSPHRASE:?set BACKUP_PASSPHRASE}
       BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
       BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-14}
-      BACKUP_KEEP_MONTHS: ${BACKUP_KEEP_MONTHS:-12}
+      BACKUP_KEEP_MONTHS: ${BACKUP_KEEP_MONTHS:-60}
     volumes:
       - ./backups:/backups           # copy this folder off the server (see docs/OPERATIONS.md)
       - media:/media

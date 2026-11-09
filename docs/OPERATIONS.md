@@ -56,7 +56,11 @@ Then, in the application:
 
 **Automatic:** every 24 hours the `backup` service writes an encrypted copy of the database and of
 all attachments to the `backups/` folder (AES-256, passphrase from `.env`). It keeps the last 14
-days plus one per month for 12 months.
+days plus one per month for 60 months (5 years) by default -- this matches the minimum period for
+retaining accounting books, records and e-invoices under Egypt's Unified Tax Procedures Law
+206/2020 and the Commercial Law 17/1999, so a disaster that destroys the live database does not
+also leave the business short of the legally required history. Change it with `BACKUP_KEEP_DAILY`
+/ `BACKUP_KEEP_MONTHS` in `.env` if a longer or shorter window is required for a given company.
 
 **You must copy them off the server.** A backup on the same machine does not survive losing the machine.
 Pick one:

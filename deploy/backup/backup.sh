@@ -6,7 +6,11 @@
 #                        /control volume.
 #   erp-backup once   — one backup now, synchronously (manual/cron use outside the loop)
 # Files: /backups/erp-YYYYmmdd-HHMMSS.{sql.gz,media.tar.gz}.gpg  (AES-256, passphrase BACKUP_PASSPHRASE)
-# Keeps BACKUP_KEEP_DAILY (default 14) newest sets plus the first set of each month for BACKUP_KEEP_MONTHS (12).
+# Keeps BACKUP_KEEP_DAILY (default 14) newest sets plus the first set of each month for
+# BACKUP_KEEP_MONTHS (default 60, i.e. 5 years -- the minimum period for retaining accounting
+# books, records and e-invoices under Egypt's Unified Tax Procedures Law 206/2020 and the
+# Commercial Law 17/1999, so a disaster that takes out the live database never leaves the
+# business short of the legally required history; see docs/ACCOUNTING_DESIGN.md section 19).
 # Status for the button is written to /control/status.json after every run (manual or scheduled).
 # No cloud destination is wired up yet -- when one is, push it from the end of backup() below;
 # everything above it (encryption, naming, pruning, status) stays the same.
@@ -40,7 +44,7 @@ backup() {
 }
 
 prune() {
-  keep_daily=${BACKUP_KEEP_DAILY:-14}; keep_months=${BACKUP_KEEP_MONTHS:-12}
+  keep_daily=${BACKUP_KEEP_DAILY:-14}; keep_months=${BACKUP_KEEP_MONTHS:-60}
   sets=$(ls "$DEST"/erp-*.sql.gz.gpg 2>/dev/null | sed 's#.*/erp-##; s#\.sql\.gz\.gpg##' | sort -r)
   keep=$(echo "$sets" | head -n "$keep_daily")
   monthly=$(echo "$sets" | sort | awk '{m=substr($0,1,6); if (!(m in s)) {s[m]=1; print}}' | sort -r | head -n "$keep_months")
