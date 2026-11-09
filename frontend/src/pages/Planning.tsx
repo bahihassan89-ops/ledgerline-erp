@@ -70,6 +70,21 @@ function BudgetGrid({ budget, years, readOnly }: any) {
   const accById = useMemo(() => Object.fromEntries(accounts.map((a) => [a.id, a])), [accounts])
   const save = () => run(() => put(`/budgets/${budget.id}/lines/`, { lines: Object.entries(grid).flatMap(([a, ps]) => Object.entries(ps).map(([p, v]) => ({ account: Number(a), period: Number(p), amount: v || '0' }))) }), 'Budget saved')
   const fill = (a: number) => { const v = window.prompt('Amount per month:'); if (v) setGrid({ ...grid, [a]: Object.fromEntries(periods.map((p: any) => [p.id, v])) }) }
+  // Splitting an annual total evenly (e.g. 4,000,000 / 12) in floating point and rounding each
+  // month to 2dp independently loses pennies off the total (333,333.33 × 12 = 3,999,999.96, or
+  // worse with more decimals kept). Do the division in integer cents and dump the remainder into
+  // the last period, so the twelve months always foot exactly back to the amount entered.
+  const spread = (a: number) => {
+    const v = window.prompt('Annual total — split evenly across the year, remainder in the last period:')
+    const total = v ? num(v) : 0
+    if (!total || !periods.length) return
+    const n = periods.length
+    const totalCents = Math.round(total * 100)
+    const base = Math.trunc(totalCents / n)
+    const remainder = totalCents - base * n
+    setGrid({ ...grid, [a]: Object.fromEntries(periods.map((p: any, i: number) =>
+      [p.id, ((i === n - 1 ? base + remainder : base) / 100).toFixed(2)])) })
+  }
   return (
     <div className="card">
       {!readOnly && <div className="toolbar"><div style={{ width: 340 }}><AccountSelect value={add} onChange={setAdd} filter={(a) => ['income', 'expense'].includes(a.account_class) && !grid[a.id]} placeholder="Add account…" /></div>
@@ -80,7 +95,7 @@ function BudgetGrid({ budget, years, readOnly }: any) {
           <tr key={a}><td style={{ whiteSpace: 'nowrap' }}>{accById[a] ? `${accById[a].code} ${accById[a].name}` : a}</td>
             {periods.map((p: any) => <td key={p.id}><input className="num" style={{ width: 90 }} disabled={readOnly} value={grid[a]?.[p.id] ?? ''} onChange={(e) => setGrid({ ...grid, [a]: { ...grid[a], [p.id]: e.target.value } })} /></td>)}
             <td className="num"><b>{money(Object.values(grid[a] || {}).reduce((s, v) => s + num(v), 0))}</b></td>
-            <td>{!readOnly && <button className="sm ghost" onClick={() => fill(a)}>Fill</button>}</td></tr>))}</tbody>
+            <td>{!readOnly && <><button className="sm ghost" onClick={() => fill(a)}>Fill</button><button className="sm ghost" onClick={() => spread(a)}>Spread</button></>}</td></tr>))}</tbody>
       </table></div>
     </div>
   )

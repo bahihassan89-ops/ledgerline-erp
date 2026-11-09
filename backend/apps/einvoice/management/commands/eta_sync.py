@@ -18,7 +18,11 @@ class Command(BaseCommand):
             for st in EtaSettings.objects.filter(enabled=True).select_related("company"):
                 c = st.company
                 try:
-                    s = services.submit_pending(c)
+                    # auto_submit=False means the company is still testing in preprod ahead of
+                    # go-live: submission happens only via the manual submit-pending/resubmit
+                    # API actions, not from this background loop. Status refresh and fetching
+                    # received documents are harmless either way and always run.
+                    s = services.submit_pending(c) if st.auto_submit else 0
                     r = services.refresh_submitted(c)
                     n = services.fetch_received(c) if received else 0
                     if s or r or n:

@@ -94,6 +94,37 @@ def test_bank_reconciliation(eg):
     assert D(r["balance_per_bank"]) == D(59975) and D(r["balance_per_books"]) == D(57975)
 
 
+def test_candidates_scoped_to_statement_period(eg):
+    """The `candidates` action must only offer unmatched GL bank lines within ±10 days of the
+    statement's own date_from/date_to (matching auto_match's tolerance) -- not just the 200 most
+    recently posted unmatched lines account-wide, which could crowd out an older statement's actual
+    candidates entirely once the books had moved on."""
+    from rest_framework.test import APIClient
+
+    from apps.banking.models import BankStatement
+
+    def bank_line(day, amount):
+        e = gl.create_entry(eg.c, eg.J["GEN"], eg.d(*day), [
+            gl.LineSpec(account=eg.A["110110"], debit=D(amount)),
+            gl.LineSpec(account=eg.A["310101"], credit=D(amount))], user=eg.cfo)
+        gl.post_entry(e, eg.cfo)
+
+    bank_line((2, 15), 500)  # 14 days before date_from -> outside the ±10 day window
+    bank_line((3, 5), 700)  # inside the statement period
+    bank_line((4, 15), 900)  # 15 days after date_to -> outside the ±10 day window
+
+    st = BankStatement.objects.create(company=eg.c, journal=eg.J["BNK"], date_from=eg.d(3, 1), date_to=eg.d(3, 31),
+                                      opening_balance=D(0), closing_balance=D(0))
+
+    cl = APIClient()
+    cl.force_authenticate(eg.cfo)
+    cl.credentials(HTTP_X_COMPANY=str(eg.c.pk))
+    r = cl.get(f"/api/bank-statements/{st.pk}/candidates/")
+    assert r.status_code == 200, r.content
+    assert len(r.data) == 1
+    assert D(r.data[0]["amount"]) == D(700)
+
+
 def test_statement_must_add_up(eg):
     with pytest.raises(BusinessError, match="does not add up"):
         bank.import_csv(eg.c, eg.J["BNK"], "date,amount\n2026-03-01,100\n", D(0), D(90), eg.accountant)
@@ -397,6 +428,51 @@ def test_cash_flow_reconciles(eg):
     assert D(cf["financing"]["total"]) == D(100000)
 
 
+def test_cash_flow_short_term_borrowing_is_financing(eg):
+    """Regression: 210402 Short-Term Borrowings is account_type current_liability, which has no
+    CF_DEFAULT entry, so before the fix it silently fell through to the generic "operating" default
+    (same bucket as ordinary accruals/payables) instead of financing."""
+    e = gl.create_entry(eg.c, eg.J["GEN"], eg.d(2, 1), [
+        gl.LineSpec(account=eg.A["110110"], debit=D(50000)), gl.LineSpec(account=eg.A["210402"], credit=D(50000))],
+        user=eg.cfo)
+    gl.post_entry(e, eg.cfo)
+    cf = reports.cash_flow(eg.c, eg.d(1, 1), eg.d(12, 31))
+    assert cf["reconciled"] and D(cf["net_change"]) == D(50000)
+    assert D(cf["financing"]["total"]) == D(50000) and D(cf["operating"]["total"]) == D(0)
+    fin_rows = {r["label"]: D(r["amount"]) for r in cf["financing"]["rows"]}
+    assert fin_rows["Proceeds / (repayment) of short-term borrowings"] == D(50000)
+    op_rows = {r["label"]: D(r["amount"]) for r in cf["operating"]["rows"]}
+    assert "Increase / (decrease) in accruals and other payables" not in op_rows
+
+
+def test_cash_flow_disposal_proceeds_to_investing(eg):
+    """Regression: a disposal's gross-cost credit and accumulated-depreciation debit used to be
+    classified independently (full cost into investing, accumulated depreciation and the gain/loss
+    into operating as if routine) instead of showing actual sale proceeds as a single investing line.
+    The grand total happened to reconcile either way (double-entry), but the section split was wrong."""
+    cat = AssetCategory.objects.get(company=eg.c, name="Computers & IT")
+    a = Asset.objects.create(company=eg.c, code="FAD1", name="Server", category=cat, acquisition_date=eg.d(1, 10),
+                             in_service_date=eg.d(1, 10), cost=D(36000), useful_life_months=36,
+                             method="straight_line")
+    e = gl.create_entry(eg.c, eg.J["GEN"], eg.d(1, 10), [
+        gl.LineSpec(account=eg.A["120106"], debit=D(36000)), gl.LineSpec(account=eg.A["110110"], credit=D(36000))],
+        user=eg.cfo)
+    gl.post_entry(e, eg.cfo)
+    fa.confirm(a, eg.cfo)
+    fa.run_depreciation(eg.c, eg.d(6, 30), eg.cfo)
+    fa.dispose(a, eg.d(7, 31), D(32000), eg.A["110110"], eg.cfo)  # NBV 29,000 sold for 32,000 -> gain 3,000
+    cf = reports.cash_flow(eg.c, eg.d(1, 1), eg.d(12, 31))
+    assert cf["reconciled"] and D(cf["net_change"]) == D(-4000)  # 36,000 out, 32,000 back in
+    inv_rows = {r["label"]: D(r["amount"]) for r in cf["investing"]["rows"]}
+    assert inv_rows["Proceeds from disposal of fixed assets"] == D(32000)
+    assert inv_rows["Purchase / disposal of property, plant and equipment"] == D(-36000)
+    assert D(cf["investing"]["total"]) == D(-4000)
+    op_rows = {r["label"]: D(r["amount"]) for r in cf["operating"]["rows"]}
+    assert op_rows["Depreciation and amortisation"] == D(7000)  # Jan-Jul, none double-counted via disposal
+    assert op_rows["(Gain) / loss on disposal of fixed assets"] == D(-3000)  # backed out of operating
+    assert D(cf["net_profit"]) == D(-4000) and D(cf["operating"]["total"]) == D(0)
+
+
 def test_close_checklist(eg):
     from apps.ledger.checklist import run
     from apps.ledger.models import FiscalPeriod
@@ -407,3 +483,34 @@ def test_close_checklist(eg):
     items = {i["key"]: i for i in res["items"]}
     assert items["drafts"]["status"] == "fail" and not res["ready_to_close"]
     assert items["tb"]["status"] == "ok" and items["subledger"]["status"] == "ok"
+
+
+def test_close_checklist_warns_on_negative_fx_bank_balance(eg):
+    # Item #19: a foreign-currency bank/cash account that is genuinely overdrawn in its OWN currency
+    # (not merely negative in EGP after closing-rate revaluation) should surface as a non-blocking
+    # "warn" -- per the FC's "consider a warning" guidance (same source comment as item #18).
+    from apps.ledger.checklist import run
+    from apps.ledger.models import FiscalPeriod
+    ExchangeRate.objects.create(company=eg.c, currency_id="USD", date=eg.d(1, 1), rate=D(50))
+    bank = eg.A["110111"]
+    bank.currency_id = "USD"
+    bank.save()
+    e = gl.create_entry(eg.c, eg.J["GEN"], eg.d(1, 15), [
+        gl.LineSpec(account=eg.A["520201"], debit=D(50000)),
+        gl.LineSpec(account=bank, credit=D(50000), amount_currency=D(-1000)),
+    ], user=eg.cfo, currency="USD")
+    gl.post_entry(e, eg.cfo)
+    res = run(eg.c, FiscalPeriod.objects.get(company=eg.c, number=1))
+    items = {i["key"]: i for i in res["items"]}
+    assert items["fx_balances"]["status"] == "warn"
+    assert "110111" in items["fx_balances"]["detail"] and "USD" in items["fx_balances"]["detail"]
+    assert items["fx_balances"]["count"] == 1
+    assert res["ready_to_close"]  # warn never blocks the close
+
+
+def test_close_checklist_fx_balances_ok_when_no_negative_fx(eg):
+    from apps.ledger.checklist import run
+    from apps.ledger.models import FiscalPeriod
+    res = run(eg.c, FiscalPeriod.objects.get(company=eg.c, number=1))
+    items = {i["key"]: i for i in res["items"]}
+    assert items["fx_balances"]["status"] == "ok" and items["fx_balances"]["count"] == 0

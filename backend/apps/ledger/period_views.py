@@ -1,4 +1,5 @@
 """Period-end and data endpoints: close checklist, FX revaluation, imports."""
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.response import Response
@@ -19,6 +20,14 @@ class ChecklistView(APIView):
         c = resolve_company(request)
         pid = request.query_params.get("period")
         if pid:
+            # pid comes straight off the query string, so it may not even be a valid integer
+            # (e.g. a stray date string or typo) -- get_object_or_404 only catches
+            # Http404/DoesNotExist, not the bare ValueError Django's IntegerField lookup raises
+            # on a non-numeric pk, which would otherwise bubble up as an uncaught 500.
+            try:
+                pid = int(pid)
+            except (TypeError, ValueError):
+                raise Http404("Invalid period id.")
             period = get_object_or_404(FiscalPeriod, pk=pid, company=c)
         else:
             d = timezone.localdate()
@@ -63,7 +72,12 @@ class ImportView(APIView):
             return Response(imports.open_items(c, request.data.get("kind", "receivable"), rows, request.user),
                             status=201)
         if kind == "journal":
-            j = get_object_or_404(Journal, pk=request.data.get("journal"), company=c)
+            # Same non-numeric-pk-crashes-as-500 hazard as ChecklistView.get above.
+            try:
+                jid = int(request.data.get("journal"))
+            except (TypeError, ValueError):
+                raise Http404("Invalid journal id.")
+            j = get_object_or_404(Journal, pk=jid, company=c)
             return Response(imports.journal_csv(c, j, d, request.data.get("narration", "Imported journal"), rows,
                                                 request.user), status=201)
         return Response({"detail": "Unknown import."}, status=404)

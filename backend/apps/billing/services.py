@@ -885,19 +885,31 @@ def aging(company, kind, as_of):
         if open_amt <= 0:
             continue
         base = round_to(open_amt * inv.rate, decimals)
-        if inv.is_refund:
-            base = -base
         days = (as_of - (inv.due_date or inv.date)).days
-        bucket = next(b for b, lo, hi in BUCKETS if (lo is None and days <= 0) or
-                      (lo is not None and days >= lo and (hi is None or days <= hi)))
         row = partners.setdefault(inv.partner_id, {"partner_id": inv.partner_id, "partner": inv.partner.name,
                                                    "code": inv.partner.code, **{b: ZERO for b, *_ in BUCKETS},
                                                    "total": ZERO, "documents": []})
-        row[bucket] += base
-        row["total"] += base
+        if inv.is_refund:
+            # Unapplied credit note balance: a credit sitting on the customer's account, not an
+            # overdue debt. Report it under "unallocated" (the same key unapplied payments use
+            # below) instead of burying a negative amount in whatever aging bucket the credit
+            # note's own date happens to land in. Like the unapplied-payment branch further down,
+            # the bucket itself holds the positive magnitude of the credit (the frontend renders
+            # it in parens to show it's a reduction) while the total is net down by that amount.
+            bucket = "unallocated"
+            row.setdefault("unallocated", ZERO)
+            row["unallocated"] += base
+            row["total"] -= base
+            signed_base = -base
+        else:
+            bucket = next(b for b, lo, hi in BUCKETS if (lo is None and days <= 0) or
+                          (lo is not None and days >= lo and (hi is None or days <= hi)))
+            row[bucket] += base
+            row["total"] += base
+            signed_base = base
         row["documents"].append({"id": inv.pk, "number": inv.number, "date": inv.date, "due_date": inv.due_date,
                                  "days_overdue": max(days, 0), "currency": inv.currency_id,
-                                 "open_amount": str(open_amt), "open_base": str(base), "bucket": bucket})
+                                 "open_amount": str(open_amt), "open_base": str(signed_base), "bucket": bucket})
     # unallocated payments reduce the balance
     pays = Payment.objects.filter(company=company, state=DocState.POSTED, date__lte=as_of,
                                   direction="inbound" if kind == "receivable" else "outbound")
@@ -927,8 +939,9 @@ def aging(company, kind, as_of):
 
 def ecl_aged_receivables(company, as_of):
     """Expected Credit Loss (ECL) provision: each AR aging bucket x the matching
-    AccountingSettings.ecl_rate_* percentage (AccountingSettingsView/Settings page -- FC to
-    confirm actual rates; they default to 0%, so this returns an all-zero provision until set)."""
+    AccountingSettings.ecl_rate_* percentage (AccountingSettingsView/Settings page). Rates default
+    to a standard conservative simplified-approach matrix (0% / 5% / 10% / 25% / 50%) -- each
+    company's FC/controller should review and override these per their own loss history."""
     ag = aging(company, "receivable", as_of)
     st = gl.settings_for(company)
     rates = {"current": st.ecl_rate_current, "1_30": st.ecl_rate_1_30, "31_60": st.ecl_rate_31_60,

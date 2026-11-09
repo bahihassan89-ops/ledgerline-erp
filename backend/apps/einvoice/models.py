@@ -38,7 +38,12 @@ class EtaSettings(models.Model):
         ("service", "Signing agent (USB token / HSM)"), ("unsigned_preprod", "Unsigned v0.9 (pre-production only)")])
     signer_url = models.URLField(blank=True)
     signer_token = EncryptedTextField(blank=True, default="")
-    auto_submit = models.BooleanField(default=True, help_text="Submit automatically when an invoice is posted")
+    # Defaults to OFF: a company should test building/signing a handful of invoices manually
+    # (via the submit-pending / resubmit actions) during preprod setup before flipping this on
+    # for real-time auto-submission at go-live. The eta_sync background worker also respects
+    # this flag (see apps.einvoice.management.commands.eta_sync) -- enabling ETA integration
+    # alone does not cause automatic submission.
+    auto_submit = models.BooleanField(default=False, help_text="Submit automatically when an invoice is posted")
     # Thresholds that change by decree: verify with your tax advisor.
     person_id_threshold = models.DecimalField(max_digits=20, decimal_places=2, default=Decimal("25000"),
                                               help_text="Individuals: national ID required at/above this total (EGP)")

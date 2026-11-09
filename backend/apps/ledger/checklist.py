@@ -24,7 +24,7 @@ def run(company, period):
     from apps.einvoice.services import eta_settings
     from apps.inventory.services import valuation_report
     from apps.ledger import reports
-    from apps.ledger.models import Journal
+    from apps.ledger.models import Account, Journal
     from apps.manufacturing.services import wip_report
     from apps.planning.models import RecurringEntry
     from apps.purchasing.models import PurchaseOrderLine
@@ -98,6 +98,22 @@ def run(company, period):
                      "ok" if revalued or pending_fx == 0 else ("fail" if pending_fx == -1 else "warn"),
                      "Done" if revalued else ("Missing closing exchange rate" if pending_fx == -1 else
                                               f"{pending_fx} items to revalue"), None, "/revaluation"))
+    # Distinct from an EGP-terms overdraft: this flags an account that is genuinely overdrawn in its
+    # OWN foreign currency (e.g. actually spent more EUR than the till holds), not one that merely
+    # looks negative in EGP after closing-rate revaluation. Non-blocking per EAS 13 / Decree 636 of
+    # 2024 guidance -- "consider a warning", so status is "warn" and never fails the close.
+    base = company.base_currency_id
+    neg_fx = []
+    for acc in Account.objects.filter(company=company, currency__isnull=False, account_type__in=["bank", "cash"]) \
+            .exclude(currency_id=base):
+        fc = JournalLine.objects.filter(company=company, account=acc, posted=True, date__lte=end).aggregate(
+            fc=Sum("amount_currency"))["fc"] or ZERO
+        if fc < 0:
+            neg_fx.append(f"{acc.code} ({fc} {acc.currency_id})")
+    out.append(_item("fx_balances", "Foreign-currency cash/bank accounts not overdrawn in their own currency",
+                     "ok" if not neg_fx else "warn",
+                     "; ".join(neg_fx) if neg_fx else "No negative foreign-currency balances",
+                     len(neg_fx), "/reports?r=general-ledger"))
     st = eta_settings(company)
     if st and st.enabled:
         bad = EtaDocument.objects.filter(company=company, invoice__date__gte=start, invoice__date__lte=end).exclude(

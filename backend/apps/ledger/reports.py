@@ -240,27 +240,60 @@ CF_LABELS = {
     "equity": "Capital contributed / (withdrawn)",
     "retained_earnings": "Dividends and other movements in retained earnings",
 }
+# CF_LABELS is keyed by account_type, which is too coarse once a specific account's section is
+# overridden via Account.cash_flow_category (e.g. coa.py's CF() flag) rather than taken from its
+# type's CF_DEFAULT: "Short-Term Borrowings" is account_type current_liability, so without this it
+# would be moved into financing but keep the generic "...accruals and other payables" label. Override
+# by account code for the handful of accounts where that happens.
+CF_LABEL_BY_CODE = {
+    "210402": "Proceeds / (repayment) of short-term borrowings",
+}
 
 
 def cash_flow(company, date_from, date_to):
     """Indirect method (EAS 4 / IAS 7). Built from balance movements of every non-cash account, so it
     always reconciles to the actual change in cash. Closing entries are ignored (net profit is shown
     instead of its transfer to retained earnings), and go-live opening-balance entries are part of
-    opening cash, not flows of the period."""
+    opening cash, not flows of the period.
+
+    Fixed-asset disposals (JournalEntry.source_type == "asset", set exclusively by
+    apps.assets.services.dispose()) are special-cased. Left to the generic per-account classification
+    below, a disposal's gross-cost credit would land the *entire* original cost in investing (not the
+    actual sale proceeds), while its accumulated-depreciation debit and any gain/loss would land in
+    operating as if they were routine recurring movements -- the grand total still happens to
+    reconcile (double-entry guarantees that), but the section attribution is wrong. Instead: exclude
+    the cost and accumulated-depreciation legs from their normal buckets, back the non-cash gain/(loss)
+    out of operating, and inject a single computed "Proceeds from disposal of fixed assets" investing
+    line (= cost - accumulated_depreciation + gain/(loss), the same identity dispose() itself uses via
+    nbv/result). This leaves the total unchanged -- so `reconciled` still holds -- it only fixes which
+    section the movement is attributed to. Actual proceeds received as cash or on account still flow
+    through the normal cash/receivable handling below, so partial/deferred proceeds reconcile too."""
     from collections import defaultdict
     from .services import settings_for
     opening_journal = settings_for(company).opening_journal_id
     qs = (JournalLine.objects.filter(company=company, posted=True, date__gte=date_from, date__lte=date_to,
                                      entry__is_closing=False).exclude(entry__journal_id=opening_journal)
           .values("account__account_type", "account__account_class", "account__cash_flow_category", "account__code",
-                  "account__name").annotate(d=Sum("debit"), c=Sum("credit")))
+                  "account__name", "entry__source_type").annotate(d=Sum("debit"), c=Sum("credit")))
     net_profit = ZERO
     sections = defaultdict(lambda: defaultdict(lambda: ZERO))
     cash_change = ZERO
+    disposal_cost = disposal_accum = disposal_result = ZERO
     for r in qs:
         move = (r["d"] or ZERO) - (r["c"] or ZERO)  # + = debit movement
+        is_disposal = r["entry__source_type"] == "asset"
         if r["account__account_class"] in PL_CLASSES:
             net_profit -= move
+            if is_disposal:
+                # Non-cash: back it out of operating again, and fold it into the proceeds identity.
+                disposal_result += move
+                sections["operating"]["(Gain) / loss on disposal of fixed assets"] += move
+            continue
+        if is_disposal and r["account__account_type"] in ("fixed_asset", "non_current_asset"):
+            disposal_cost += move
+            continue
+        if is_disposal and r["account__account_type"] == "accumulated_depreciation":
+            disposal_accum += move
             continue
         cat = r["account__cash_flow_category"] or CF_DEFAULT.get(r["account__account_type"], "operating")
         if cat == "cash":
@@ -268,8 +301,11 @@ def cash_flow(company, date_from, date_to):
             continue
         if cat == "none":
             continue
-        label = CF_LABELS.get(r["account__account_type"], r["account__name"])
+        label = CF_LABEL_BY_CODE.get(r["account__code"]) or CF_LABELS.get(r["account__account_type"], r["account__name"])
         sections[cat][label] += -move  # a debit movement in a non-cash account is a use of cash
+    proceeds = -(disposal_cost + disposal_accum + disposal_result)
+    if proceeds:
+        sections["investing"]["Proceeds from disposal of fixed assets"] += proceeds
     def sec(name):
         rows = [{"label": k, "amount": str(v)} for k, v in sections[name].items() if v]
         return rows, sum(sections[name].values(), ZERO)

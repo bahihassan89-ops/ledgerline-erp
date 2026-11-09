@@ -121,9 +121,11 @@ class VendorBillViewSet(_InvoiceBase):
 
 
 class AllocateSerializer(serializers.Serializer):
+    # No "date" field: _allocs() below never read one even before this fix, and the realised-FX date
+    # on an allocation is always the payment's/bill's own date (see PaymentViewSet.allocate), not a
+    # client-supplied value -- an accepted-but-ignored field here would wrongly suggest otherwise.
     invoice = serializers.IntegerField()
     amount = serializers.DecimalField(max_digits=20, decimal_places=4)
-    date = serializers.DateField(required=False)
 
 
 class PaymentViewSet(CompanyViewSet):
@@ -159,10 +161,14 @@ class PaymentViewSet(CompanyViewSet):
 
     @action(detail=True, methods=["post"])
     def allocate(self, request, pk=None):
+        # Realised FX belongs to the payment's own date/rate, not to whenever someone got around to
+        # matching it to an invoice -- matches post_payment()'s on_date=pay.date for the same reason.
+        # A client-supplied "date" here used to silently override that with today's date (the frontend
+        # never actually sends one, so this always fired), understating/overstating the FX difference
+        # relative to the period the cash movement actually happened in.
         pay = self.get_object()
         for inv, amount in self._allocs(request.data.get("allocations") or [request.data]):
-            services.allocate(self.company, inv, amount, request.user, payment=pay,
-                              on_date=parse_date(request.data.get("date"), timezone.localdate()))
+            services.allocate(self.company, inv, amount, request.user, payment=pay, on_date=pay.date)
         pay.refresh_from_db()
         return Response(self.get_serializer(pay).data)
 

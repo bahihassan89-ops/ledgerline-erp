@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import serializers
@@ -89,9 +91,15 @@ class BankStatementViewSet(CompanyReadOnlyViewSet):
     @action(detail=True)
     def candidates(self, request, pk=None):
         st = self.get_object()
-        lines = (JournalLine.objects.filter(company=self.company, account=st.journal.default_account, posted=True,
-                                            bank_match__isnull=True).select_related("entry", "partner")
-                 .order_by("-date")[:200])
+        # Scope to the statement's own period (±10 days, matching auto_match's tolerance in
+        # services.py, for bank-timing lag) -- unscoped this returned the 200 most recently
+        # posted unmatched lines account-wide, so reconciling an older statement after the books
+        # had moved on could show none of the actual candidates (crowded out by newer ones) or a
+        # page of unrelated, far-future/past entries to sift through.
+        lines = (JournalLine.objects.filter(
+            company=self.company, account=st.journal.default_account, posted=True, bank_match__isnull=True,
+            date__gte=st.date_from - timedelta(days=10), date__lte=st.date_to + timedelta(days=10))
+                 .select_related("entry", "partner").order_by("-date")[:200])
         return Response([{"id": l.pk, "date": l.date, "number": l.entry.number, "reference": l.entry.reference,
                           "partner": l.partner.name if l.partner else "", "amount": str(l.debit - l.credit),
                           "description": l.description} for l in lines])

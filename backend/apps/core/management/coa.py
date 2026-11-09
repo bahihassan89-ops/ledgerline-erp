@@ -6,6 +6,15 @@ Node: (code, name_en, name_ar, type, children-or-flags...). Root nodes also carr
 C = "control"
 IC = "intercompany"
 
+
+def CF(category):
+    """Flag: explicit cash-flow-statement classification override for this leaf account (stored on
+    Account.cash_flow_category; see apps.ledger.reports.CF_DEFAULT/cash_flow()). Only needed where the
+    account_type's generic default would misclassify the account -- e.g. short-term borrowings are
+    `current_liability`, whose only default is the generic operating fallback, even though drawing
+    down or repaying a borrowing is a financing activity, not an operating one."""
+    return f"cf:{category}"
+
 CHART = [
     ("1", "Assets", "الأصول", "group", "asset", [
         ("11", "Current Assets", "الأصول المتداولة", "group", [
@@ -98,7 +107,7 @@ CHART = [
             ("2104", "Other Current Liabilities", "التزامات متداولة أخرى", "group", [
                 ("210401", "Customer Advances / Deferred Revenue", "دفعات مقدمة من العملاء / إيرادات مؤجلة",
                  "current_liability"),
-                ("210402", "Short-Term Borrowings", "قروض قصيرة الأجل", "current_liability"),
+                ("210402", "Short-Term Borrowings", "قروض قصيرة الأجل", "current_liability", CF("financing")),
             ]),
         ]),
         ("22", "Non-Current Liabilities", "الالتزامات غير المتداولة", "group", [

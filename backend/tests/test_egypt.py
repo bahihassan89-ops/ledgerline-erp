@@ -165,6 +165,38 @@ def test_eta_document_build_submit_and_status(eg):
     assert doc.state == "cancel_requested"
 
 
+def test_eta_export_invoice_uses_bank_rate_not_invoice_rate(eg):
+    # Item #18: an export invoice can be legitimately settled at a business-negotiated rate that
+    # differs from the actual bank/CBE rate of the day -- Invoice.rate (used for amountEGP/vat/wht,
+    # which must stay consistent with what's posted to the GL) is NOT what ETA wants reported in
+    # currencyExchangeRate; that field must reflect the real bank rate for that date, independent of
+    # whatever commercial rate the invoice itself was booked at.
+    from apps.core.models import ExchangeRate
+
+    eg.eta.enabled = True
+    eg.eta.save()
+    ExchangeRate.objects.create(company=eg.c, currency_id="USD", date=eg.d(4, 1), rate=D("50.00"))  # the bank rate
+    inv = Invoice.objects.create(company=eg.c, move_type="out_invoice", partner=eg.customer, currency_id="USD",
+                                 date=eg.d(4, 12), rate=D("49.00"))  # negotiated settlement rate, != bank rate
+    InvoiceLine.objects.create(invoice=inv, product=eg.item, description=eg.item.name, account=eg.A["410101"],
+                               quantity=1, unit_price=100, tax=eg.T["VAT14-S"])
+    inv = billing.post_invoice(inv, eg.accountant)
+    assert inv.rate == D("49.00")  # the GL/books keep the negotiated rate, untouched
+
+    d = eta.build_document(inv, eg.eta)
+    ln = d["invoiceLines"][0]
+    assert ln["unitValue"]["currencyExchangeRate"] == 50.0  # ETA gets the bank rate, not 49
+    # amountEGP must still equal amountSold * currencyExchangeRate for ETA's own math to check out.
+    assert round(ln["unitValue"]["amountSold"] * ln["unitValue"]["currencyExchangeRate"], 2) == \
+        round(ln["unitValue"]["amountEGP"], 2)
+
+    # Falls back to the invoice's own rate when no bank rate was ever recorded for that date, instead
+    # of failing the ETA submission outright.
+    ExchangeRate.objects.filter(company=eg.c, currency_id="USD").delete()
+    d2 = eta.build_document(inv, eg.eta)
+    assert d2["invoiceLines"][0]["unitValue"]["currencyExchangeRate"] == 49.0
+
+
 def test_eta_invalid_document_and_resubmit(eg):
     eg.eta.enabled = True
     eg.eta.save()
@@ -196,6 +228,32 @@ def test_eta_signing_agent(eg):
 def test_canonical_serialization():
     doc = {"a": "x", "lines": [{"v": 1.5}, {"v": 2}], "n": {"k": "q\"t"}, "signatures": [{"value": "s"}]}
     assert eta.serialize(doc) == '"A""x""LINES""LINES""V""1.5""LINES""V""2""N""K""q\\"t"'
+
+
+def test_eta_sync_worker_respects_auto_submit_flag(eg, monkeypatch):
+    # Item #11: EtaSettings.auto_submit now defaults to False (a company testing ETA in preprod
+    # before go-live should not have every posted invoice auto-submitted). The background
+    # eta_sync worker used to call submit_pending() for every *enabled* company regardless of
+    # this flag, defeating the point of turning auto_submit off -- within ~60s the next loop
+    # iteration would submit everything anyway. This locks in the fix: the worker only submits
+    # when auto_submit is True, but still refreshes statuses either way.
+    from apps.einvoice.management.commands import eta_sync as eta_sync_cmd
+
+    eg.eta.enabled = True
+    assert eg.eta.auto_submit is False  # the new default
+    eg.eta.save()
+
+    calls = {"submit": 0, "refresh": 0}
+    monkeypatch.setattr(eta_sync_cmd.services, "submit_pending", lambda c: calls.__setitem__("submit", calls["submit"] + 1) or 0)
+    monkeypatch.setattr(eta_sync_cmd.services, "refresh_submitted", lambda c: calls.__setitem__("refresh", calls["refresh"] + 1) or 0)
+
+    eta_sync_cmd.Command().handle(loop=False, received=False)
+    assert calls == {"submit": 0, "refresh": 1}  # auto_submit off: no submission, status still refreshed
+
+    eg.eta.auto_submit = True
+    eg.eta.save()
+    eta_sync_cmd.Command().handle(loop=False, received=False)
+    assert calls == {"submit": 1, "refresh": 2}  # auto_submit on: the worker submits
 
 
 def test_opening_items_are_not_e_invoiced(eg):

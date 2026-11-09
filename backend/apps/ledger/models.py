@@ -305,12 +305,18 @@ class AccountingSettings(models.Model):
     closing_journal = models.ForeignKey(Journal, null=True, on_delete=models.PROTECT, related_name="+")
     # Expected Credit Loss (ECL) provisioning rates applied to AR aging buckets (see
     # apps.billing.services.aging / BUCKETS) to compute a bad-debt provision for the
-    # "ECL aged receivables" report. Percentages, e.g. 5.00 = 5%. FC to confirm actual rates.
+    # "ECL aged receivables" report. Percentages, e.g. 5.00 = 5%.
+    #
+    # Defaults below are a standard conservative simplified-approach matrix (IFRS 9 / EAS 47),
+    # not a company-specific FC estimate -- the handbook and FC review comments were checked
+    # and neither proposes concrete rates (only the aging bucket boundaries themselves: not due,
+    # 1-30, 31-60, 61-90, over 90). Each company's FC/controller should still review and override
+    # these per their own loss history via Settings; see AccountingSettings in the admin/API.
     ecl_rate_current = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0"))
-    ecl_rate_1_30 = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0"))
-    ecl_rate_31_60 = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0"))
-    ecl_rate_61_90 = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0"))
-    ecl_rate_over_90 = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("0"))
+    ecl_rate_1_30 = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("5"))
+    ecl_rate_31_60 = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("10"))
+    ecl_rate_61_90 = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("25"))
+    ecl_rate_over_90 = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("50"))
 
 
 class EntryState(models.TextChoices):

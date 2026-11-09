@@ -14,11 +14,13 @@ from datetime import datetime, time, timedelta
 from datetime import timezone as dt_tz
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.utils import timezone
 
 from apps.core import audit
 from apps.core.exceptions import BusinessError
+from apps.core.models import ExchangeRate
 from apps.core.money import ZERO, D, round_to
 
 from .models import EtaDocState, EtaDocument, EtaReceivedDocument, EtaSettings
@@ -115,6 +117,21 @@ def build_document(inv, st):
     c, p = inv.company, inv.partner
     rate = D(inv.rate or 1)
     foreign = inv.currency_id != "EGP"
+    # ETA requires `currencyExchangeRate` to be the actual bank/CBE exchange rate of the invoice
+    # date, which is not necessarily the same number as Invoice.rate -- that can be a
+    # business-negotiated settlement rate agreed with the customer (or, per a related bug, an unset
+    # default of 1). Look the day's real rate up independently of the invoice's own rate; amountEGP/
+    # vat/wht/net above still use `rate` since those must stay consistent with what's actually posted
+    # to the GL. `amountSold` is derived from the same bank_rate so it stays mathematically consistent
+    # with `amountEGP` and `currencyExchangeRate` (amountEGP == amountSold * currencyExchangeRate),
+    # rather than silently mixing two different rates in the same line. Falls back to the invoice's
+    # own rate if no bank rate was ever recorded for that date, rather than failing the ETA submission.
+    bank_rate = rate
+    if foreign:
+        try:
+            bank_rate = ExchangeRate.rate_for(c, inv.currency_id, inv.date)
+        except DjangoValidationError:
+            bank_rate = rate
     issuer_address = {"branchID": st.branch_id or "0", "country": "EG", "governate": st.governate,
                       "regionCity": st.region_city, "street": st.street, "buildingNumber": st.building_number}
     for k, f in (("postalCode", "postal_code"), ("floor", "floor"), ("room", "room"), ("landmark", "landmark"),
@@ -144,7 +161,7 @@ def build_document(inv, st):
                             "subType": ln.withholding_tax.eta_subtype, "rate": _n(ln.withholding_tax.rate, 2)})
         unit_value = {"currencySold": inv.currency_id, "amountEGP": _n(unit_egp)}
         if foreign:
-            unit_value.update({"amountSold": _n(unit_egp / rate), "currencyExchangeRate": _n(rate)})
+            unit_value.update({"amountSold": _n(unit_egp / bank_rate), "currencyExchangeRate": _n(bank_rate)})
         lines.append({
             "description": ln.description, "itemType": ln.product.eta_item_type, "itemCode": ln.product.eta_item_code,
             "unitType": ln.product.eta_unit_type or "EA", "quantity": _n(ln.quantity), "internalCode": ln.product.sku,

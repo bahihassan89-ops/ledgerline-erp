@@ -109,15 +109,27 @@ def sync_chart(company):
             cls, rest = rest[0], rest[1:]
         children = rest[-1] if rest and isinstance(rest[-1], list) else []
         flags = [f for f in rest if isinstance(f, str)]
+        cf_flags = [f[len("cf:"):] for f in flags if f.startswith("cf:")]
+        cash_flow_category = cf_flags[0] if cf_flags else ""
         a = by_code.get(code)
         if a is None:
             a = Account(company=company, code=code, name=name, name_ar=name_ar, parent=parent, account_class=cls,
-                        account_type=typ, is_control="control" in flags, is_intercompany="intercompany" in flags)
+                        account_type=typ, is_control="control" in flags, is_intercompany="intercompany" in flags,
+                        cash_flow_category=cash_flow_category)
             a.clean()
             a.save()
             by_code[code] = a
-        elif not a.name_ar:
-            Account.objects.filter(pk=a.pk).update(name_ar=name_ar)
+        else:
+            # Never touch an existing account's identity fields -- only backfill blanks, the same way
+            # name_ar already was, so a CF() flag added here later still reaches companies set up
+            # before the flag existed (e.g. the 210402 Short-Term Borrowings -> financing fix).
+            updates = {}
+            if not a.name_ar:
+                updates["name_ar"] = name_ar
+            if cash_flow_category and not a.cash_flow_category:
+                updates["cash_flow_category"] = cash_flow_category
+            if updates:
+                Account.objects.filter(pk=a.pk).update(**updates)
         for ch in children:
             make(ch, a, cls)
 

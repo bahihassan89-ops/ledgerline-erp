@@ -29,6 +29,15 @@ def exception_handler(exc, ctx):
     if isinstance(exc, DjangoPermissionDenied):
         return Response({"error": "forbidden", "detail": str(exc) or "Permission denied."},
                         status=status.HTTP_403_FORBIDDEN)
+    if isinstance(exc, ValueError):
+        # Safety net for the common "pk=<garbage>" shape: get_object_or_404(Model, pk=request.data.get(...))
+        # only catches Http404/DoesNotExist, so a non-numeric id for an integer PK field raises a bare
+        # ValueError from Django's field coercion deep inside the ORM and would otherwise surface as an
+        # unhandled 500 for what is really just malformed client input. Several view call sites across
+        # billing/assets/banking share this shape; this is a global backstop rather than patching each one.
+        log.warning("Bad request value treated as 400: %s", exc)
+        return Response({"error": "bad_request", "detail": "Invalid request parameter."},
+                        status=status.HTTP_400_BAD_REQUEST)
     response = drf_handler(exc, ctx)
     if response is None:
         log.exception("Unhandled API error")

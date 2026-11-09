@@ -28,6 +28,21 @@ def test_new_endpoints_respond(eg):
         assert r.status_code == 200, (url, r.status_code, r.content[:300])
 
 
+def test_close_checklist_rejects_malformed_period_instead_of_500(eg):
+    # Item #16: FiscalPeriod's pk is an integer field, and get_object_or_404 only catches
+    # Http404/DoesNotExist -- it does NOT catch the bare ValueError Django's ORM raises when
+    # asked to filter an integer pk by a non-numeric string, so a stray/garbled `period` query
+    # param (e.g. a date string, or a typo) used to bubble up as an unhandled 500 instead of a
+    # clean 404. Also covers the global exception-handler backstop in apps/core/exceptions.py
+    # for the same ValueError shape, which several other endpoints share (journal csv import,
+    # etc.) without each one adding its own int-coercion guard.
+    cl = client(eg, eg.cfo)
+    r = cl.get("/api/close-checklist/", {"period": "not-a-number"})
+    assert r.status_code == 404, (r.status_code, r.content[:300])
+    r = cl.get("/api/close-checklist/", {"period": "999999999"})  # well-formed but nonexistent
+    assert r.status_code == 404, (r.status_code, r.content[:300])
+
+
 def test_eta_secret_never_returned(eg):
     cl = client(eg, eg.cfo)
     r = cl.patch("/api/eta-settings/", {"client_secret": "TOPSECRET", "taxpayer_activity_code": "4620"}, format="json")

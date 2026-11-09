@@ -1,6 +1,9 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from apps.core.serializers_base import CompanyScopedSerializer, DocumentSerializer
+from apps.ledger import services as gl
 
 from . import services
 from .models import Allocation, ChequeInstalmentPlan, GuaranteeCheque, Invoice, InvoiceLine, Payment
@@ -141,6 +144,18 @@ class PaymentSerializer(CompanyScopedSerializer):
         j = attrs.get("journal")
         if j and j.type not in ("bank", "cash"):
             raise serializers.ValidationError({"journal": "Choose a bank or cash journal."})
+        # A foreign-currency draft used to just sit at Payment.rate's model default of 1 until
+        # posting -- post_payment() only resolves a real rate at that point, via the `rate != 1`
+        # "has the user already set something real" convention below. That left the draft screen
+        # showing a misleading 1.0 rate for anything non-base the whole time it's a draft. Resolve
+        # it the same way here too, but only when the caller didn't already type their own rate
+        # (still at the unset default of 1) -- an explicit non-default rate is left alone.
+        company = self.context.get("company")
+        currency = attrs.get("currency") or getattr(self.instance, "currency", None)
+        date = attrs.get("date", getattr(self.instance, "date", None))
+        if (company and currency and date and currency.pk != company.base_currency_id
+                and attrs.get("rate", Decimal("1")) == Decimal("1")):
+            attrs["rate"] = gl.resolve_rate(company, currency.pk, date)
         return attrs
 
 
