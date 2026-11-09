@@ -71,6 +71,19 @@ def test_withholding_threshold_cumulative_per_payee(eg):
     assert b4.amount_wht == 0
 
 
+def test_withholding_eta_subtypes(eg):
+    """ETA withholding-tax sub-type codes (FC review, item #22): commission WHT must file under
+    W006, not the old W011 -- `Tax.eta_subtype` has no field-level validation, so a regression here
+    would only surface downstream as a rejected ETA submission. Also locks in the two categories
+    added by the same review: W003 (1% WHT on purchases of goods) and W010 (5% WHT on professional
+    fees). See apps/core/management/commands/setup_company.py EGYPT_TAXES and migration
+    0010_fc_review_tax_fixes (which applied the same fix retroactively to existing companies)."""
+    assert eg.T["WHT5-COM-P"].eta_subtype == "W006" and eg.T["WHT5-COM-S"].eta_subtype == "W006"
+    assert eg.T["WHT1-GDS-P"].eta_subtype == "W003" and eg.T["WHT1-GDS-S"].eta_subtype == "W003"
+    assert eg.T["WHT5-PRF-P"].eta_subtype == "W010" and eg.T["WHT5-PRF-S"].eta_subtype == "W010"
+    assert "W011" not in {t.eta_subtype for t in eg.T.values()}
+
+
 def test_customer_withholding_and_form41(eg):
     inv = billing.post_invoice(invoice(eg, eg.service, 2, 5000, wht=eg.T["WHT3-SRV-S"]), eg.accountant)
     assert inv.amount_total == D(10000 + 1400 - 300)
