@@ -8,8 +8,13 @@ from apps.core.signals import audited
 class DocumentType(models.TextChoices):
     SALES_ORDER = "sales_order", "Sales order"
     PURCHASE_ORDER = "purchase_order", "Purchase order"
-    CUSTOMER_INVOICE = "customer_invoice", "Customer invoice / credit note"
-    VENDOR_BILL = "vendor_bill", "Vendor bill / debit note"
+    CUSTOMER_INVOICE = "customer_invoice", "Customer invoice"
+    VENDOR_BILL = "vendor_bill", "Vendor bill"
+    # Credit/debit notes (returns) get their own document type -- rather than sharing
+    # CUSTOMER_INVOICE/VENDOR_BILL with ordinary invoices/bills -- so they can carry their own
+    # (typically lower) approval threshold. See billing.services.post_invoice.
+    CUSTOMER_RETURN = "customer_return", "Customer credit note (return)"
+    VENDOR_RETURN = "vendor_return", "Vendor debit note (return)"
     PAYMENT = "payment", "Payment"
     JOURNAL_ENTRY = "journal_entry", "Manual journal entry"
     INVENTORY_COUNT = "inventory_count", "Inventory count adjustment"

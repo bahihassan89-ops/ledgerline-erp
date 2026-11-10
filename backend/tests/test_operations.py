@@ -135,7 +135,7 @@ def test_order_to_cash_credit_note_and_aging(env):
     assert inv.amount_total == D(460)
     tb = {r["code"]: D(r["closing"]) for r in reports.trial_balance(env.c, env.d(1, 1), env.d(12, 31))["rows"]}
     assert tb["510101"] == D(160) and tb["410101"] == D(-400) and tb["210301"] == D(-60)
-    cn = billing.create_refund(inv, env.senior, reason="1 unit damaged")
+    cn = billing.create_refund(inv, env.senior, reason_code="damaged_in_transit", reason="1 unit damaged")
     ln = cn.lines.first()
     ln.quantity = 1
     ln.save()
@@ -310,6 +310,45 @@ def test_approval_limit(env):
         approvals.decide(req, env.accountant, True)  # limit 10,000
     approvals.decide(req, env.senior, True)          # limit 50,000
     assert billing.post_invoice(Invoice.objects.get(pk=bill.pk), env.accountant).state == "posted"
+
+
+def test_create_refund_requires_reason_code(env):
+    # Item #32: returns reached 5.8% of sales in one company (21% in a single month at its peak,
+    # per the FC review) -- a reason has to be mandatory and structured, not an optional free-text
+    # afterthought, so it can actually be analysed and policed.
+    inv = Invoice.objects.create(company=env.c, move_type="out_invoice", partner=env.customer, currency_id="USD",
+                                 date=env.d(6, 1))
+    InvoiceLine.objects.create(invoice=inv, description="Widgets", account=env.A["410101"], quantity=1,
+                               unit_price=100)
+    inv = billing.post_invoice(inv, env.accountant)
+    with pytest.raises(BusinessError, match="reason"):
+        billing.create_refund(inv, env.accountant)
+    with pytest.raises(BusinessError, match="Explain"):
+        billing.create_refund(inv, env.accountant, reason_code="other")
+    cn = billing.create_refund(inv, env.accountant, reason_code="pricing_dispute")
+    assert cn.reason_code == "pricing_dispute"
+
+
+def test_large_customer_return_requires_approval(env):
+    # The default "Customer return above threshold" rule (see setup_company.py) fires at 20,000 --
+    # well below the 250,000 threshold on an ordinary large sales order/vendor bill, since returns
+    # are a higher-risk document per the FC review.
+    inv = Invoice.objects.create(company=env.c, move_type="out_invoice", partner=env.customer, currency_id="USD",
+                                 date=env.d(6, 1))
+    InvoiceLine.objects.create(invoice=inv, description="Equipment", account=env.A["410101"], quantity=1,
+                               unit_price=30000)
+    inv = billing.post_invoice(inv, env.accountant)
+    assert inv.state == "posted"
+    cn = billing.create_refund(inv, env.accountant, reason_code="pricing_dispute")
+    cn = billing.post_invoice(cn, env.accountant)
+    assert cn.state == "to_approve"
+    req = ApprovalRequest.objects.get(document_id=cn.pk)
+    assert req.document_type == "customer_return"
+    approvals.decide(req, env.controller, True)
+    cn.refresh_from_db()
+    assert cn.state == "approved"
+    cn = billing.post_invoice(Invoice.objects.get(pk=cn.pk), env.accountant)
+    assert cn.state == "posted"
 
 
 def test_vendor_bill_for_stock_product_without_po_line_is_blocked(env):

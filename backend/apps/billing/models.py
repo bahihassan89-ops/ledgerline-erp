@@ -33,6 +33,21 @@ class PaymentState(models.TextChoices):
     PAID = "paid", "Paid"
 
 
+class ReturnReason(models.TextChoices):
+    """Structured reason codes for credit/debit notes (FC review: returns reached 5.8% of sales
+    in one company, and 21% in a single month -- a free-text reason field alone doesn't let that
+    get analysed or policed). Required on every refund; see billing.services.create_refund."""
+    DEFECTIVE = "defective", "Defective / faulty goods"
+    WRONG_ITEM = "wrong_item", "Wrong item shipped / received"
+    EXCESS_QUANTITY = "excess_quantity", "Excess quantity delivered"
+    DAMAGED_IN_TRANSIT = "damaged_in_transit", "Damaged in transit"
+    QUALITY_ISSUE = "quality_issue", "Quality below specification"
+    CUSTOMER_CHANGED_MIND = "customer_changed_mind", "Customer changed mind / no longer needed"
+    PRICING_DISPUTE = "pricing_dispute", "Pricing or billing dispute"
+    EXPIRED = "expired", "Expired / near-expiry"
+    OTHER = "other", "Other (explain in notes)"
+
+
 class Invoice(CompanyScoped):
     move_type = models.CharField(max_length=12, choices=InvoiceType.choices)
     number = models.CharField(max_length=40, blank=True, db_index=True)
@@ -61,6 +76,10 @@ class Invoice(CompanyScoped):
     purchase_order = models.ForeignKey("purchasing.PurchaseOrder", null=True, blank=True, on_delete=models.PROTECT,
                                        related_name="bills")
     notes = models.TextField(blank=True)
+    # Required on every credit/debit note (see services.create_refund); blank on ordinary
+    # invoices/bills. Kept separate from the free-text `notes` field so returns can actually be
+    # reported on and policed, not just explained after the fact.
+    reason_code = models.CharField(max_length=24, blank=True, choices=ReturnReason.choices)
     # Credit/debit notes for goods physically returned: stock moves are created when posted.
     return_to_stock = models.BooleanField(default=False)
     # Imported open item from the previous system (go-live). Not e-invoiced, no 3-way match.

@@ -170,7 +170,7 @@ def test_eta_document_build_submit_and_status(eg):
     assert eta.refresh(doc, transport=fake).state == "valid"
     assert doc.public_url().endswith(f"/print/documents/UUID-{inv.number}/share/LONG")
     # credit note references the original UUID
-    cn = billing.create_refund(inv, eg.cfo, reason="price adjustment")
+    cn = billing.create_refund(inv, eg.cfo, reason_code="pricing_dispute", reason="price adjustment")
     cn = billing.post_invoice(cn, eg.cfo)
     assert eta.build_document(cn, eg.eta)["references"] == [doc.uuid]
     assert EtaDocument.objects.get(invoice=cn).document_type == "C"

@@ -54,7 +54,9 @@ class _InvoiceBase(CompanyViewSet):
 
     @action(detail=True, methods=["post"])
     def refund(self, request, pk=None):
-        ref = services.create_refund(self.get_object(), request.user, reason=request.data.get("reason", ""),
+        ref = services.create_refund(self.get_object(), request.user,
+                                     reason_code=request.data.get("reason_code", ""),
+                                     reason=request.data.get("reason", ""),
                                      return_to_stock=bool(request.data.get("return_to_stock")))
         return Response(self.get_serializer(ref).data, status=201)
 

@@ -19,7 +19,7 @@ from apps.ledger.models import EntryState
 
 from .calc import apply_totals
 from .models import (CUSTOMER_TYPES, Allocation, ChequeInstalmentPlan, DocState, GuaranteeCheque, Invoice,
-                     InvoiceLine, InvoiceType, Payment, PaymentState)
+                     InvoiceLine, InvoiceType, Payment, PaymentState, ReturnReason)
 
 PREFIX = {InvoiceType.OUT_INVOICE: "INV", InvoiceType.OUT_REFUND: "CN",
           InvoiceType.IN_INVOICE: "BILL", InvoiceType.IN_REFUND: "DN"}
@@ -130,7 +130,13 @@ def post_invoice(inv, user):
     inv.rate = gl.resolve_rate(company, inv.currency_id, inv.date,
                                inv.rate if inv.currency_id != company.base_currency_id and inv.rate != 1 else None)
     amount_base = gl.to_base(company, inv.amount_total, inv.rate)
-    doc_type = DocumentType.CUSTOMER_INVOICE if inv.is_customer else DocumentType.VENDOR_BILL
+    # Returns get their own document type (and typically lower threshold) rather than sharing
+    # ordinary invoices'/bills' approval rule -- see approvals.models.DocumentType and the FC
+    # review note on return rates (5.8% of sales, 21% in a single month at one company).
+    if inv.is_refund:
+        doc_type = DocumentType.CUSTOMER_RETURN if inv.is_customer else DocumentType.VENDOR_RETURN
+    else:
+        doc_type = DocumentType.CUSTOMER_INVOICE if inv.is_customer else DocumentType.VENDOR_BILL
     if not inv.is_opening and not ensure_approved(company, doc_type, inv, amount_base, user):
         return inv  # now waiting for approval
 
@@ -413,16 +419,24 @@ def _process_return(inv, lines, user):
 
 
 @transaction.atomic
-def create_refund(inv, user, lines=None, reason="", return_to_stock=False):
+def create_refund(inv, user, lines=None, reason_code="", reason="", return_to_stock=False):
     """Draft credit note (customer) or debit note (vendor) from a posted document.
+    `reason_code`: mandatory structured reason (see ReturnReason) -- FC review flagged returns
+    reaching 5.8% of sales in one company (21% in a single month), so the reason has to be
+    reportable, not just a free-text note. `reason`: free text, required when reason_code is OTHER.
     `return_to_stock`: the goods come back physically (stock moves are created when it is posted)."""
     if inv.state != DocState.POSTED or inv.is_refund:
         raise BusinessError("Credit/debit notes can only be issued against a posted invoice or bill.", "invalid_state")
+    if reason_code not in ReturnReason.values:
+        raise BusinessError("Choose a reason for this credit/debit note.", "reason_code_required")
+    if reason_code == ReturnReason.OTHER and not reason.strip():
+        raise BusinessError("Explain the reason when 'Other' is selected.", "reason_required")
     refund = Invoice.objects.create(
         company=inv.company, move_type=InvoiceType.OUT_REFUND if inv.is_customer else InvoiceType.IN_REFUND,
         partner=inv.partner, date=timezone.localdate(), currency=inv.currency, rate=inv.rate,
-        reference=f"Refund of {inv.number}", origin_invoice=inv, notes=reason, created_by=user,
-        sales_order=inv.sales_order, purchase_order=inv.purchase_order, return_to_stock=return_to_stock)
+        reference=f"Refund of {inv.number}", origin_invoice=inv, reason_code=reason_code, notes=reason,
+        created_by=user, sales_order=inv.sales_order, purchase_order=inv.purchase_order,
+        return_to_stock=return_to_stock)
     for i, ln in enumerate(inv.lines.all()):
         InvoiceLine.objects.create(invoice=refund, sequence=i, product=ln.product, description=ln.description,
                                    account=ln.account, quantity=ln.quantity, unit_price=ln.unit_price,

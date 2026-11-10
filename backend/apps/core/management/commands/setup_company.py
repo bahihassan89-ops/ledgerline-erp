@@ -222,6 +222,11 @@ def setup(company, vat, year, egypt=None):
         ("Large manual journal → Controller", "journal_entry", 100000, [4]),
         ("Large sales order → Senior Accountant", "sales_order", 250000, [3]),
         ("Large inventory count variance → Controller", "inventory_count", 25000, [4]),
+        # Returns are a higher-risk document than ordinary invoices/bills (FC review: returns
+        # reached 5.8% of sales in one company, 21% in a single month at its peak), so the
+        # threshold is set well below the ordinary invoice/bill ones above.
+        ("Customer return above threshold → Controller", "customer_return", 20000, [4]),
+        ("Vendor return above threshold → Controller", "vendor_return", 20000, [4]),
     ]:
         ApprovalRule.objects.create(company=company, name=name, document_type=dtype, min_amount=amount * k,
                                     approver_levels=levels)

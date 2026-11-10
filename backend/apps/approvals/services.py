@@ -12,6 +12,8 @@ DOC_MODELS = {
     DocumentType.PURCHASE_ORDER: "purchasing.PurchaseOrder",
     DocumentType.CUSTOMER_INVOICE: "billing.Invoice",
     DocumentType.VENDOR_BILL: "billing.Invoice",
+    DocumentType.CUSTOMER_RETURN: "billing.Invoice",
+    DocumentType.VENDOR_RETURN: "billing.Invoice",
     DocumentType.PAYMENT: "billing.Payment",
     DocumentType.JOURNAL_ENTRY: "ledger.JournalEntry",
     DocumentType.INVENTORY_COUNT: "inventory.InventoryCount",

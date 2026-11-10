@@ -70,7 +70,7 @@ class InvoiceSerializer(DocumentSerializer):
                   "currency", "rate", "reference", "state", "payment_state", "amount_untaxed", "amount_tax",
                   "amount_wht", "amount_total", "amount_total_base", "amount_residual", "journal_entry",
                   "entry_number", "origin_invoice", "origin_number", "sales_order", "purchase_order", "notes",
-                  "return_to_stock", "is_opening", "posted_at", "created_at", "lines", "allocations",
+                  "reason_code", "return_to_stock", "is_opening", "posted_at", "created_at", "lines", "allocations",
                   "days_overdue", "eta"]
         read_only_fields = ["number", "state", "payment_state", "amount_untaxed", "amount_tax", "amount_wht",
                             "is_opening", "amount_total",

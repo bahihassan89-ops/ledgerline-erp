@@ -9,6 +9,21 @@ import { useFetch, useOptions } from '../lib/hooks'
 import { EntryById } from './JournalEntries'
 
 type Kind = 'invoices' | 'bills'
+// Mirrors apps.billing.models.ReturnReason -- keep in sync with the backend choices.
+// Item #32 (FC review): returns reached 5.8% of sales in one company (21% in a single month at
+// its peak), so every credit/debit note needs a structured, reportable reason -- not a free-text
+// afterthought.
+const REFUND_REASONS: [string, string][] = [
+  ['defective', 'Defective / faulty goods'],
+  ['wrong_item', 'Wrong item shipped / received'],
+  ['excess_quantity', 'Excess quantity delivered'],
+  ['damaged_in_transit', 'Damaged in transit'],
+  ['quality_issue', 'Quality below specification'],
+  ['customer_changed_mind', 'Customer changed mind / no longer needed'],
+  ['pricing_dispute', 'Pricing or billing dispute'],
+  ['expired', 'Expired / near-expiry'],
+  ['other', 'Other (explain in notes)'],
+]
 const CFG = {
   invoices: { title: 'Customer Invoices', base: '/invoices/', types: [['out_invoice', 'Invoice'], ['out_refund', 'Credit note']], partner: 'customer' as const, p: 'billing.invoice', scope: 'sale' as const, acc: 'income', what: 'invoice' },
   bills: { title: 'Vendor Bills', base: '/bills/', types: [['in_invoice', 'Bill'], ['in_refund', 'Debit note']], partner: 'vendor' as const, p: 'billing.bill', scope: 'purchase' as const, acc: 'expense', what: 'bill' },
@@ -65,6 +80,7 @@ export function DocEditor({ kind, doc, defaults, onClose, onChanged }: { kind: K
   const taxes = useOptions<any>('/taxes/')
   const [showEntry, setShowEntry] = useState(false)
   const [pay, setPay] = useState(false)
+  const [refund, setRefund] = useState(false)
   const { run, busy } = useAction()
   const pById = useMemo(() => Object.fromEntries(products.map((p) => [p.id, p])), [products])
   const partners = useOptions<any>('/partners/', { active: true })
@@ -112,7 +128,7 @@ export function DocEditor({ kind, doc, defaults, onClose, onChanged }: { kind: K
         {d?.journal_entry && <button onClick={() => setShowEntry(true)}>View journal entry</button>}
         <span style={{ flex: 1 }} />
         {d && <button onClick={() => window.open(`/print/${kind}/${d.id}`, '_blank')}>Print</button>}
-        {d?.state === 'posted' && can(`${cfg.p}.cancel`) && !d.move_type.endsWith('refund') && <button onClick={() => { const reason = window.prompt('Reason for the credit/debit note?'); if (reason === null) return; const ret = window.confirm('Are goods physically being returned to stock?\n\nOK = yes, create stock moves · Cancel = price/allowance only'); act('refund', `${cfg.types[1][1]} draft created`, { reason, return_to_stock: ret }) }}>Create {cfg.types[1][1].toLowerCase()}</button>}
+        {d?.state === 'posted' && can(`${cfg.p}.cancel`) && !d.move_type.endsWith('refund') && <button onClick={() => setRefund(true)}>Create {cfg.types[1][1].toLowerCase()}</button>}
         {kind === 'invoices' && d?.state === 'posted' && d.move_type === 'out_invoice' && can(`${cfg.p}.create`) && <button onClick={() => act('debit-note', 'Debit note draft created', { reason: window.prompt('Reason for the debit note?') || '' })}>Debit note</button>}
         {d && d.state !== 'cancelled' && can(`${cfg.p}.cancel`) && (d.state !== 'posted' || num(d.amount_residual) === num(d.amount_total)) && <button className="danger" onClick={() => { const r = window.prompt('Reason for cancelling (audit trail):'); if (r) act('cancel', 'Cancelled', { reason: r }) }}>Cancel</button>}
         {d?.state === 'posted' && num(d.amount_residual) > 0 && can('billing.payment.post') && <button onClick={() => setPay(true)}>Register payment</button>}
@@ -172,6 +188,31 @@ export function DocEditor({ kind, doc, defaults, onClose, onChanged }: { kind: K
       {d?.id && <Attachments type="billing.invoice" id={d.id} canEdit={can(`${cfg.p}.create`)} />}
       {showEntry && <EntryById id={d.journal_entry} onClose={() => setShowEntry(false)} />}
       {pay && <RegisterPayment base={cfg.base} doc={d} onClose={() => setPay(false)} onDone={(inv: any) => { setPay(false); setD(inv); onChanged() }} />}
+      {refund && <RefundDialog base={cfg.base} doc={d} label={cfg.types[1][1]} onClose={() => setRefund(false)} onDone={(r: any) => { setRefund(false); onChanged(); setD(r) }} />}
+    </Modal>
+  )
+}
+
+function RefundDialog({ base, doc, label, onClose, onDone }: any) {
+  const [f, setF] = useState({ reason_code: '', reason: '', return_to_stock: false })
+  const { run, busy } = useAction()
+  const needsReason = f.reason_code === 'other'
+  const go = async () => { const r = await run(() => post(`${base}${doc.id}/refund/`, f), `${label} draft created`); if (r) onDone(r) }
+  return (
+    <Modal title={`Create ${label.toLowerCase()} — ${doc.number}`} onClose={onClose}
+      footer={<><button onClick={onClose}>Cancel</button><button className="primary" disabled={busy || !f.reason_code || (needsReason && !f.reason.trim())} onClick={go}>Create draft</button></>}>
+      <Field label="Reason" hint="Required -- lets returns be analysed and policed, not just explained after the fact.">
+        <select value={f.reason_code} onChange={(e) => setF({ ...f, reason_code: e.target.value })}>
+          <option value="">Select a reason…</option>
+          {REFUND_REASONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+      </Field>
+      <Field label={needsReason ? 'Explain (required)' : 'Notes (optional)'}>
+        <textarea rows={2} value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} />
+      </Field>
+      <Field label="Goods physically returned to stock?">
+        <label className="row"><input type="checkbox" checked={f.return_to_stock} onChange={(e) => setF({ ...f, return_to_stock: e.target.checked })} /> Create stock moves when posted (leave unchecked for price/allowance only)</label>
+      </Field>
     </Modal>
   )
 }

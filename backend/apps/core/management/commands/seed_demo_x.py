@@ -389,7 +389,7 @@ class Command(BaseCommand):
 
         # --------------------------------------------------------------------------- bad debt write-off
 
-        refund = billing.create_refund(bad_debt_inv, users["senior"],
+        refund = billing.create_refund(bad_debt_inv, users["senior"], reason_code="other",
                                        reason="Customer insolvency -- deemed uncollectible, written off per "
                                               "controller approval", return_to_stock=False)
         refund.date = date(YEAR, 12, 20)

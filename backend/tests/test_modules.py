@@ -242,7 +242,7 @@ def test_customer_return_to_stock(eg):
     sales.confirm(so, eg.accountant)
     sales.deliver(so, eg.accountant, on_date=eg.d(2, 6))
     inv = billing.post_invoice(sales.create_invoice(so, eg.accountant, eg.d(2, 6)), eg.accountant)
-    cn = billing.create_refund(inv, eg.cfo, reason="2 units returned", return_to_stock=True)
+    cn = billing.create_refund(inv, eg.cfo, reason_code="excess_quantity", reason="2 units returned", return_to_stock=True)
     ln = cn.lines.first()
     ln.quantity = 2
     ln.save()
@@ -264,7 +264,7 @@ def test_editing_draft_return_keeps_order_line_link(eg):
     sales.confirm(so, eg.accountant)
     sales.deliver(so, eg.accountant, on_date=eg.d(2, 6))
     inv = billing.post_invoice(sales.create_invoice(so, eg.accountant, eg.d(2, 6)), eg.accountant)
-    cn = billing.create_refund(inv, eg.cfo, reason="units returned", return_to_stock=True)
+    cn = billing.create_refund(inv, eg.cfo, reason_code="excess_quantity", reason="units returned", return_to_stock=True)
     ln = cn.lines.first()
     assert ln.sales_line_id is not None
 
@@ -297,7 +297,7 @@ def test_vendor_return_to_stock(eg):
         ln.withholding_tax = None
         ln.save()
     b = billing.post_invoice(b, eg.cfo)
-    dn = billing.create_refund(b, eg.cfo, reason="3 defective", return_to_stock=True)
+    dn = billing.create_refund(b, eg.cfo, reason_code="defective", reason="3 defective", return_to_stock=True)
     ln = dn.lines.first()
     ln.quantity = 3
     ln.save()
