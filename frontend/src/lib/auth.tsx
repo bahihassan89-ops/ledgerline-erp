@@ -73,7 +73,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return ps.some((p) => me.global_permissions.includes(p))
   }
   const finishLogin = async (t: { access: string; refresh: string }) => { session.setTokens(t.access, t.refresh); setJustAuthenticated(true); await reload() }
-  const switchCompany = (id: number) => { session.setCompany(id); setCompanyId(id); window.location.assign('/') }
+  // Previously this did window.location.assign('/') to force a full reload -- not because the
+  // in-memory access token or any auth state actually needed refreshing (company scoping is a
+  // plain X-Company header read from localStorage on every request, see api.ts, so it takes
+  // effect on the very next call with no server round trip), but only as a crude way to reset
+  // justAuthenticated (nothing else did) and to force every mounted page to refetch its data.
+  // That reload forced a refresh-token redemption; SIMPLE_JWT rotates+blacklists refresh tokens,
+  // so a second concurrent refresh (e.g. from Layout's presence heartbeat remounting at the same
+  // moment) could hit an already-blacklisted token, get a 401, and trip the global unauthorized
+  // handler -- logging the user out even though nothing about their session had actually expired.
+  // Just update state instead: setJustAuthenticated(false) directly replaces the reload's reset,
+  // and keying the routed content on company.id (see App.tsx) remounts every page the same way a
+  // navigation would, without touching tokens at all.
+  const switchCompany = (id: number) => { session.setCompany(id); setCompanyId(id); setJustAuthenticated(false) }
   const needsCompanyChoice = justAuthenticated && !!me && me.companies.length > 1
   return <AuthCtx.Provider value={{ me, company, loading, can, canGlobal, reload, logout, switchCompany, finishLogin, needsCompanyChoice }}>{children}</AuthCtx.Provider>
 }

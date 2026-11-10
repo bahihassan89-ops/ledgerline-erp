@@ -51,7 +51,15 @@ ACCOUNT_TYPES = {
     "depreciation": AccountClass.EXPENSE,
     "other_expense": AccountClass.EXPENSE,
 }
-AccountType = models.TextChoices("AccountType", [(k, k.replace("_", " ").title()) for k in ACCOUNT_TYPES])
+# NOTE: deliberately a plain (value, label) list, not models.TextChoices(name, [...]) -- the
+# functional Enum API reads 2-tuples as (member_name, member_value), so TextChoices("AccountType",
+# [(k, label) for k in ACCOUNT_TYPES]) silently produced Title-Case *values* (e.g. "Group") instead
+# of the lowercase keys ("group") that every query/serializer/frontend actually sends and filters
+# on -- account_type=group requests were rejected by django-filter's ChoiceFilter with a 400, which
+# is why the parent-account dropdown in Accounts.tsx came back empty. Nothing else treats this as a
+# real Enum (only .choices is read, at the two account_type CharFields below), so a plain list is
+# both correct and sufficient.
+ACCOUNT_TYPE_CHOICES = [(k, k.replace("_", " ").title()) for k in ACCOUNT_TYPES]
 PL_CLASSES = {AccountClass.INCOME, AccountClass.EXPENSE}
 
 
@@ -66,7 +74,7 @@ class Account(CompanyScoped):
         ("operating", "Operating"), ("investing", "Investing"), ("financing", "Financing"), ("cash", "Cash"),
         ("none", "Excluded")])
     account_class = models.CharField(max_length=12, choices=AccountClass.choices)
-    account_type = models.CharField(max_length=30, choices=AccountType.choices)
+    account_type = models.CharField(max_length=30, choices=ACCOUNT_TYPE_CHOICES)
     level = models.PositiveSmallIntegerField(default=1, editable=False)
     # Reconcilable accounts track open items per partner (AR / AP).
     reconcilable = models.BooleanField(default=False)
@@ -402,7 +410,7 @@ class JournalLine(models.Model):
     # of this table once it gets large (confirmed with EXPLAIN ANALYZE under load testing:
     # ~400ms per aggregate at ~1M lines, scaling linearly with table size). Denormalizing it here,
     # the same way `date`/`posted` already are, lets those queries use an index instead.
-    account_type = models.CharField(max_length=30, choices=AccountType.choices, blank=True)
+    account_type = models.CharField(max_length=30, choices=ACCOUNT_TYPE_CHOICES, blank=True)
     # Copy of entry.branch_id, same rationale and same enforcement mechanism (DB trigger, see
     # migration 0008) as account_type above: branch-level reports filter/group by branch over
     # the whole line table, and doing that via a join to ledger_journalentry has no supporting

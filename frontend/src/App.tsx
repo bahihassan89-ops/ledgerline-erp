@@ -54,7 +54,7 @@ function CompanyChooser({ companies, onChoose }: { companies: Company[]; onChoos
 }
 
 function Routed() {
-  const { me, loading, can, needsCompanyChoice, switchCompany } = useAuth()
+  const { me, company, loading, can, needsCompanyChoice, switchCompany } = useAuth()
   if (loading) return <div className="empty">Loading…</div>
   if (!me) return <Login />
   if (!me.companies.length) return <div className="empty">Your account is not assigned to any company. Contact your administrator.</div>
@@ -75,7 +75,12 @@ function Routed() {
   const home = homeTo === '__dashboard__' ? <Dashboard /> : homeTo ? <Navigate to={homeTo} />
     : <div className="empty">Your account has no module access yet. Contact your administrator.</div>
   return (
-    <Layout>
+    // Keyed on the active company: switchCompany no longer does a hard window reload (see
+    // auth.tsx), so this is what makes every mounted page's data re-fetch against the newly
+    // selected company -- React treats a key change as a brand-new element and remounts the
+    // whole subtree (fresh effects, fresh component state) instead of leaving stale data from
+    // the previous company on screen.
+    <Layout key={company?.id}>
       <Routes>
         <Route path="/" element={home} />
         <Route path="/approvals" element={<Approvals />} />

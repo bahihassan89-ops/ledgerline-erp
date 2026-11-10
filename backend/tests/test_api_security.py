@@ -38,6 +38,26 @@ def test_auditor_read_only_and_admin_has_no_accounting(env, api):
     assert api(aud).get("/api/accounts/").status_code == 200
     assert api(aud).post("/api/journal-entries/", je_payload(env), format="json").status_code == 403
     assert api(env.admin).get("/api/journal-entries/").status_code == 403
+
+
+def test_account_type_filter_accepts_lowercase_values(env, api):
+    """Regression test (item #31): AccountType used to be built via models.TextChoices("AccountType",
+    [(k, label) for k in ACCOUNT_TYPES]) -- the Enum *functional* API, which reads 2-tuples as
+    (member_name, member_value), not (value, label). That silently produced Title-Case choice
+    *values* ("Group") instead of the lowercase keys ("group") every account actually stores and
+    every caller filters by (see apps/ledger/services.py, dashboard.py, reports.py, views.py, all
+    of which filter account_type="group"/"receivable"/etc. in lowercase). django-filter validates
+    ?account_type=<value> against Account._meta.get_field("account_type").choices, so a lowercase
+    query parameter was rejected with 400 -- which is exactly what the parent-account dropdown in
+    the frontend's Accounts.tsx sends (GET /accounts/?account_type=group), leaving it empty on
+    every load, not just intermittently."""
+    r = api(env.accountant).get("/api/accounts/", {"account_type": "group"})
+    assert r.status_code == 200, r.content
+    results = r.data["results"] if isinstance(r.data, dict) else r.data
+    assert len(results) > 0
+    assert all(a["account_type"] == "group" for a in results)
+    # "5202" (used as a group account elsewhere in this test suite) is actually in the result.
+    assert "5202" in {a["code"] for a in results}
     assert api(env.admin).get("/api/users/").status_code == 200
 
 
