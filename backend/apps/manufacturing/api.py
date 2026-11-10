@@ -239,8 +239,16 @@ class ManufacturingOrderViewSet(CompanyViewSet):
     queryset = ManufacturingOrder.objects.select_related("product").prefetch_related("components__product",
                                                                                      "operations__work_center")
     serializer_class = MoSerializer
+    # consume/produce actually move stock (raw-material issue / finished-goods receipt -- see
+    # services.consume/_backflush and services.produce/_produce_byproducts) just like
+    # PurchaseOrderViewSet.receive and SalesOrderViewSet.deliver, so they're gated the same way
+    # those are: inventory.stock.move, not the weaker manufacturing.order.manage that merely lets
+    # someone plan/schedule/cancel an order without touching physical stock. Everything else here
+    # (confirm/cancel/record-operations/reschedule/subcontract/inspect) only changes MO state/WIP
+    # cost, so manufacturing.order.manage (the "*" fallback) is the right and sufficient gate.
     perms = {"list": "manufacturing.order.view", "costs": "manufacturing.order.view", "wip": "manufacturing.order.view",
-             "bill_subcontract": "billing.bill.create", "*": "manufacturing.order.manage"}
+             "bill_subcontract": "billing.bill.create", "consume": "inventory.stock.move",
+             "produce": "inventory.stock.move", "*": "manufacturing.order.manage"}
     filterset_fields = ["state", "product"]
     search_fields = ["number", "product__sku", "product__name"]
 

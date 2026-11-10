@@ -228,6 +228,53 @@ def test_field_permission_mixin_hides_and_protects_gl_fields(env, api):
     assert r.status_code == 200, r.content
 
 
+def test_manufacturing_consume_produce_requires_inventory_stock_move(env, api):
+    """consume/produce physically move stock (raw-material issue / finished-goods receipt), so --
+    like PurchaseOrderViewSet.receive and SalesOrderViewSet.deliver -- they're gated by
+    inventory.stock.move, not the weaker manufacturing.order.manage (item #30: align the
+    stock-move permission check across every route that actually moves stock, not just
+    StockMoveViewSet's own actions)."""
+    from apps.inventory import services as stock
+    from apps.inventory.models import Product
+    from apps.manufacturing.models import Bom, BomComponent
+    from .conftest import make_user
+
+    steel = Product.objects.create(company=env.c, sku="RM-STEEL", name="Steel", category=env.fifo)
+    stock.receive(env.c, steel, env.wh, 100, 10, env.d(1, 1), env.cfo, counter_account=env.A["320102"])
+    bom = Bom.objects.create(company=env.c, code="BOM-FIFO", product=env.fifo_prod, quantity=1)
+    BomComponent.objects.create(bom=bom, product=steel, quantity=2)
+
+    cl = api(env.controller)
+    r = cl.post("/api/manufacturing-orders/", {"product": env.fifo_prod.pk, "bom": bom.pk, "quantity": "5",
+                                               "warehouse": env.wh.pk, "planned_date": str(env.d(1, 5))},
+               format="json")
+    assert r.status_code == 201, r.content
+    mo_id = r.data["id"]
+    assert cl.post(f"/api/manufacturing-orders/{mo_id}/confirm/").status_code == 200
+
+    from apps.iam.models import Role
+    planner_only = Role.objects.create(company=env.c, name="MO Planner Only", level=2,
+                                       permissions=["manufacturing.order.view", "manufacturing.order.manage"])
+    mover_only = Role.objects.create(company=env.c, name="Stock Mover Only", level=1,
+                                     permissions=["inventory.stock.view", "inventory.stock.move"])
+    planner = make_user(env.c, "mo_planner", "Accounting Clerk")
+    planner.membership(env.c.pk).roles.set([planner_only])
+    mover = make_user(env.c, "stock_mover", "Accounting Clerk")
+    mover.membership(env.c.pk).roles.set([mover_only])
+
+    # manufacturing.order.manage alone is no longer enough to actually issue/receive stock.
+    assert api(planner).post(f"/api/manufacturing-orders/{mo_id}/consume/").status_code == 403
+    # inventory.stock.move alone -- with no manufacturing.order.manage at all -- is sufficient,
+    # mirroring receive/deliver's existing convention that the inventory holder, not the order
+    # planner, is who physically moves the stock.
+    assert api(mover).post(f"/api/manufacturing-orders/{mo_id}/consume/").status_code == 200
+    r = api(mover).post(f"/api/manufacturing-orders/{mo_id}/produce/", {"quantity": "5", "finish": True},
+                        format="json")
+    assert r.status_code == 200, r.content
+    assert api(planner).post(f"/api/manufacturing-orders/{mo_id}/produce/", {"quantity": "5"},
+                             format="json").status_code == 403
+
+
 def test_idempotency_key_prevents_duplicates(env, api):
     from apps.ledger.models import JournalEntry
     cl = api(env.clerk)
