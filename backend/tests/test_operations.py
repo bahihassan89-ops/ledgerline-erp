@@ -312,6 +312,33 @@ def test_approval_limit(env):
     assert billing.post_invoice(Invoice.objects.get(pk=bill.pk), env.accountant).state == "posted"
 
 
+def test_vendor_bill_for_stock_product_without_po_line_is_blocked(env):
+    # Item #24: a bill line for a stock product with no purchase_line has no way to raise a
+    # StockMove (InvoiceLine carries no warehouse), so it used to post straight to whatever account
+    # was chosen while on-hand quantity never moved -- a silent GL/stock mismatch. post_invoice()
+    # must now reject it outright, whichever account the line was pointed at.
+    bill = Invoice.objects.create(company=env.c, move_type="in_invoice", partner=env.vendor, currency_id="USD",
+                                  date=env.d(6, 1), reference="NO-PO-1")
+    InvoiceLine.objects.create(invoice=bill, product=env.fifo_prod, description="Widgets, no PO",
+                               account=env.A["110301"], quantity=5, unit_price=10)
+    with pytest.raises(BusinessError, match="stock product") as ex:
+        billing.post_invoice(bill, env.accountant)
+    assert ex.value.code == "stock_line_without_po"
+    v = stock.valuation_report(env.c)
+    assert not any(r["sku"] == env.fifo_prod.sku for r in v["rows"])  # nothing moved
+
+
+def test_vendor_bill_for_stock_product_with_po_line_still_posts(env):
+    # Same product/vendor, but properly routed through the PO + receipt flow (purchasing.create_bill
+    # always sets purchase_line) -- the new check must not block the legitimate path.
+    po = _po(env, qty=5, price=10)
+    purchasing.confirm(po, env.accountant)
+    purchasing.receive(po, env.accountant, {po.lines.first().pk: 5}, env.d(6, 2))
+    bill = purchasing.create_bill(po, env.accountant, env.d(6, 3), "V-NO-PO")
+    bill = billing.post_invoice(bill, env.accountant)
+    assert bill.state == "posted"
+
+
 def test_cancel_posted_invoice_reverses_gl(env):
     inv = Invoice.objects.create(company=env.c, move_type="out_invoice", partner=env.customer, currency_id="USD",
                                  date=env.d(6, 1))

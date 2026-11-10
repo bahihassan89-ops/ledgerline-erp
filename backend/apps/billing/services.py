@@ -135,8 +135,10 @@ def post_invoice(inv, user):
         return inv  # now waiting for approval
 
     _check_taxes(inv, lines)
-    if inv.move_type == InvoiceType.IN_INVOICE and not inv.is_opening:
-        _three_way_match(inv, lines, user)
+    if inv.move_type == InvoiceType.IN_INVOICE:
+        _check_stock_lines(inv, lines)
+        if not inv.is_opening:
+            _three_way_match(inv, lines, user)
     if inv.is_customer and not inv.is_opening:
         from apps.einvoice.services import validate_for_eta
         validate_for_eta(inv, lines)
@@ -252,6 +254,25 @@ def _check_taxes(inv, lines):
         if ln.withholding_tax and (ln.withholding_tax.kind != "withholding" or ln.withholding_tax.scope != scope):
             raise BusinessError(f"Line '{ln.description}': '{ln.withholding_tax}' is not a {scope} withholding code.",
                                 "invalid_tax")
+
+
+def _check_stock_lines(inv, lines):
+    """A vendor-bill line for a stock product only ever moves physical stock -- and only ever clears
+    through the GRNI control account at the receipt cost (see _grni_clearing) -- when it is linked to
+    the purchase-order line whose goods receipt (apps.inventory.services.receive()) already raised
+    StockQuant/ProductValuation. There is no other path in the codebase that can create that stock
+    move: InvoiceLine carries no warehouse, so post_invoice() has nothing to receive against. A bill
+    entered directly for a stock product with no purchase_line would therefore post to whatever GL
+    account was chosen (inventory, GRNI, or anything else) while on-hand quantity never moves -- a
+    silent GL/stock mismatch. Block it and point the user at the correct workflow instead of guessing.
+    (Opening-balance bills are not exempt: opening stock quantities are seeded separately via a
+    MoveType.OPENING receive(), never through a vendor bill.)"""
+    for ln in lines:
+        if ln.product and ln.product.is_stock and not ln.purchase_line_id:
+            raise BusinessError(
+                f"Line '{ln.description}': '{ln.product}' is a stock product. Receive it on a Purchase "
+                "Order first, then bill against that PO line -- a bill entered directly for a stock "
+                "product cannot move stock quantity.", "stock_line_without_po")
 
 
 def _three_way_match(inv, lines, user):

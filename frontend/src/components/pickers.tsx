@@ -24,8 +24,9 @@ export function PartnerSelect({ value, onChange, disabled, kind, allowEmpty }: P
   )
 }
 
-export function SimpleSelect({ path, value, onChange, disabled, allowEmpty, labelOf, query }: P & { path: string; labelOf: (x: any) => string; query?: any }) {
-  const items = useOptions<any>(path, query)
+export function SimpleSelect({ path, value, onChange, disabled, allowEmpty, labelOf, query, filter }: P & { path: string; labelOf: (x: any) => string; query?: any; filter?: (x: any) => boolean }) {
+  const all = useOptions<any>(path, query)
+  const items = filter ? all.filter(filter) : all
   return (
     <select value={value ?? ''} onChange={(e) => onChange(e.target.value === '' ? null : (isNaN(Number(e.target.value)) ? e.target.value : Number(e.target.value)))} disabled={disabled}>
       {allowEmpty !== false && <option value="">— none —</option>}
@@ -40,7 +41,7 @@ export const WhtSelect = (p: P & { scope: 'sale' | 'purchase' }) =>
   <SimpleSelect {...p} path="/taxes/" query={{ scope: p.scope, active: true, kind: 'withholding' }} labelOf={(t) => `${t.name}`} />
 export const CurrencySelect = (p: P) =>
   <SimpleSelect {...p} allowEmpty={p.allowEmpty ?? false} path="/currencies/" labelOf={(c) => `${c.code} — ${c.name}`} />
-export const ProductSelect = (p: P) =>
+export const ProductSelect = (p: P & { filter?: (x: any) => boolean }) =>
   <SimpleSelect {...p} path="/products/" query={{ active: true }} labelOf={(x) => `${x.sku} · ${x.name}`} />
 export const WarehouseSelect = (p: P) =>
   <SimpleSelect {...p} allowEmpty={false} path="/warehouses/" labelOf={(x) => `${x.code} · ${x.name}`} />

@@ -63,7 +63,6 @@ export function DocEditor({ kind, doc, defaults, onClose, onChanged }: { kind: K
   const products = useOptions<any>('/products/', { active: true })
   const cats = useOptions<any>('/product-categories/')
   const taxes = useOptions<any>('/taxes/')
-  const settings = useFetch<any>('/accounting-settings/').data
   const [showEntry, setShowEntry] = useState(false)
   const [pay, setPay] = useState(false)
   const { run, busy } = useAction()
@@ -89,8 +88,11 @@ export function DocEditor({ kind, doc, defaults, onClose, onChanged }: { kind: K
     const p = id ? pById[id] : null
     if (!p) return setLine(i, { product: null })
     const cat = cats.find((c) => c.id === p.category)
-    const account = kind === 'invoices' ? (p.income_account || cat?.income_account)
-      : (p.type === 'stock' ? settings?.grni_account : (p.expense_account || cat?.expense_account))
+    // Stock products on a bill only ever reach the GL through a PO line matched to a goods receipt
+    // (apps.purchasing.services.create_bill()) -- a manually-typed bill line for a stock product has
+    // no way to move stock quantity, so the product picker below excludes them for unlinked bill
+    // lines and this branch is unreachable for 'bills'.
+    const account = kind === 'invoices' ? (p.income_account || cat?.income_account) : (p.expense_account || cat?.expense_account)
     setLine(i, { product: id, description: p.name, account: account ?? null, unit_price: String(num(kind === 'invoices' ? p.sale_price : p.purchase_price)), tax: (kind === 'invoices' ? p.sale_tax : p.purchase_tax) ?? null, withholding_tax: partnerWht })
   }
   const body = () => ({ ...h, due_date: h.due_date || null, lines: lines.map((l) => ({ id: l.id, product: l.product, description: l.description || '-', account: l.account, quantity: l.quantity || '0', unit_price: l.unit_price || '0', discount_pct: l.discount_pct || '0', tax: l.tax, withholding_tax: l.withholding_tax, cost_center: l.cost_center })) })
@@ -136,7 +138,8 @@ export function DocEditor({ kind, doc, defaults, onClose, onChanged }: { kind: K
           <thead><tr><th style={{ width: '15%' }}>Product</th><th>Description</th><th style={{ width: '15%' }}>Account</th><th className="num" style={{ width: 75 }}>Qty</th><th className="num" style={{ width: 100 }}>Unit price</th><th className="num" style={{ width: 65 }}>Disc %</th><th style={{ width: 120 }}>VAT</th><th style={{ width: 120 }}>Withholding</th><th style={{ width: 100 }}>Cost center</th><th className="num">Subtotal</th><th /></tr></thead>
           <tbody>{lines.map((l, i) => (
             <tr key={i}>
-              <td><ProductSelect value={l.product} onChange={(v) => pickProduct(i, v)} disabled={!editable || !!l.purchase_line || !!l.sales_line} /></td>
+              <td><ProductSelect value={l.product} onChange={(v) => pickProduct(i, v)} disabled={!editable || !!l.purchase_line || !!l.sales_line}
+                filter={kind === 'bills' && !l.purchase_line ? (p) => p.type !== 'stock' : undefined} /></td>
               <td><input value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} disabled={!editable} /></td>
               <td><AccountSelect value={l.account} onChange={(v) => setLine(i, { account: v })} disabled={!editable || !!l.purchase_line} filter={(a) => !a.reconcilable} /></td>
               <td><input className="num" value={l.quantity} onChange={(e) => setLine(i, { quantity: e.target.value })} disabled={!editable} /></td>
