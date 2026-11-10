@@ -42,6 +42,14 @@ class RecurringEntry(CompanyScoped):
                                                                            ("quarterly", "Quarterly"),
                                                                            ("yearly", "Yearly")])
     next_date = models.DateField()
+    # The user's originally-intended day-of-month (e.g. "always run on the 31st"). `next_date` is a
+    # mutable cursor that run_due() advances every period; once a short month forces it onto, say, the
+    # 28th, the day alone can no longer tell us whether that's the real schedule or just a clamp from
+    # a previous month. anchor_day preserves the real intent so later months can recover to it (see
+    # services._add_months / run_due). Defaults to next_date's day; kept in sync with explicit edits to
+    # next_date via the API (RecurringSerializer), but deliberately left untouched by run_due()'s own
+    # internal advancement.
+    anchor_day = models.PositiveSmallIntegerField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
     auto_post = models.BooleanField(default=False, help_text="Post automatically (creator must hold posting rights)")
     auto_reverse_days = models.PositiveSmallIntegerField(null=True, blank=True,
@@ -52,3 +60,11 @@ class RecurringEntry(CompanyScoped):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        # Safety net for instances created directly via the ORM (fixtures, tests, admin) that bypass
+        # RecurringSerializer: give a freshly-created template a sane anchor instead of leaving it
+        # None, which would otherwise crash the first run_due() advancement.
+        if self.anchor_day is None and self.next_date:
+            self.anchor_day = self.next_date.day
+        super().save(*args, **kwargs)

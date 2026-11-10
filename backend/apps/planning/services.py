@@ -5,7 +5,6 @@ from decimal import Decimal
 from django.db import transaction
 from django.db.models import Sum
 
-from apps.assets.services import add_months
 from apps.core import audit
 from apps.core.exceptions import BusinessError
 from apps.core.models import CostCenter
@@ -88,6 +87,22 @@ def budget_vs_actual(budget, date_from, date_to, cost_center=None):
             "expense": {"budget": str(tot("expense", "budget")), "actual": str(tot("expense", "actual"))}}
 
 
+def _add_months(d, months, day=None):
+    """Calendar-month addition that preserves the originally-intended day-of-month across repeated
+    calls, instead of drifting to whatever day a short month clamped it to. Same pattern as
+    apps/billing/services.py._add_months (no shared date-utility module exists; per-app private
+    copies is the established convention here), except `day` is an explicit parameter rather than
+    always `d.day` -- callers in run_due() must pass RecurringEntry.anchor_day, the user's original
+    intent, not d.day, which may already be a clamped value left over from a previous, shorter
+    month. Passing day=None falls back to d.day for any other caller."""
+    import calendar
+    day = day if day else d.day
+    total = d.month - 1 + months
+    year = d.year + total // 12
+    month = total % 12 + 1
+    return d.replace(year=year, month=month, day=min(day, calendar.monthrange(year, month)[1]))
+
+
 def _specs(rec):
     out = []
     for l in rec.lines:
@@ -112,11 +127,20 @@ def run_due(company, today, user=None):
                 entry.auto_reverse_date = rec.next_date + timedelta(days=rec.auto_reverse_days)
                 entry.save(update_fields=["auto_reverse_date"])
             if rec.auto_post and actor and "ledger.entry.post" in actor.permissions_for(company.pk):
-                gl.post_entry(entry, actor)
+                # post_entry() returns a freshly-fetched JournalEntry (it select_for_update()s a new
+                # instance rather than mutating the one passed in) -- the previous code discarded that
+                # return value, so `entry` kept its pre-posting state (no `number`, state="draft") even
+                # though the entry really was posted, and run_due()'s caller (RecurringViewSet.run_due)
+                # reported "draft #<pk>" for every auto-posted entry.
+                entry = gl.post_entry(entry, actor)
             rec.last_entry = entry
             created.append(entry)
-            rec.next_date = add_months(rec.next_date, STEP[rec.frequency]).replace(
-                day=min(rec.next_date.day, add_months(rec.next_date, STEP[rec.frequency]).day))
+            # Use rec.anchor_day (the user's original intent), not rec.next_date.day: once a short
+            # month clamps next_date onto, say, the 28th, next_date.day alone can no longer tell us
+            # whether that's the real schedule or just a clamp, so every subsequent month would stay
+            # stuck at the clamped day forever instead of recovering once a long-enough month comes
+            # around again. See RecurringEntry.anchor_day and _add_months() above.
+            rec.next_date = _add_months(rec.next_date, STEP[rec.frequency], day=rec.anchor_day)
         if rec.end_date and rec.next_date > rec.end_date:
             rec.active = False
         rec.save()

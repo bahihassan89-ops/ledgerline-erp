@@ -350,6 +350,65 @@ def test_recurring_with_auto_reversal(eg):
     assert rec.active is False
 
 
+def test_recurring_anchor_day_prevents_permanent_drift(eg):
+    # Item #25: before anchor_day existed, next_date.day got permanently clamped the first time a
+    # short month forced it down (e.g. 31 Jan -> 28 Feb), and every later month inherited that
+    # clamped day forever -- even months with 31 days, which should have let the schedule recover.
+    # anchor_day preserves the user's real intent (the day the template was first set up for) so the
+    # schedule actually recovers once a long-enough month comes around again.
+    rec = RecurringEntry.objects.create(
+        company=eg.c, name="Month-end accrual", journal=eg.J["GEN"], frequency="monthly",
+        next_date=eg.d(1, 31), end_date=eg.d(12, 31), auto_post=False, created_by=eg.cfo,
+        lines=[{"account": eg.A["520201"].pk, "debit": "1000"}, {"account": eg.A["210202"].pk, "credit": "1000"}])
+    assert rec.anchor_day == 31  # auto-derived at creation time (apps.planning.models.RecurringEntry.save)
+    created = run_due(eg.c, eg.d(12, 31))
+    # Days in each month this year: Jan31 Feb28 Mar31 Apr30 May31 Jun30 Jul31 Aug31 Sep30 Oct31 Nov30 Dec31.
+    # The clamp should only ever bite on the short months -- every 31-day month must land back on the 31st.
+    assert [e.date.day for e in created] == [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    rec.refresh_from_db()
+    assert rec.active is False  # next_date rolled past end_date after the Dec 31 occurrence
+
+
+def test_recurring_auto_post_returns_posted_entry_with_number(eg):
+    # Item #25: run_due() used to discard gl.post_entry()'s return value (post_entry() fetches and
+    # returns a fresh JournalEntry rather than mutating the one passed in), so the stale `entry` it
+    # appended to `created` -- and therefore RecurringViewSet.run_due's API response -- kept reporting
+    # state="draft" with no `number` even for entries that really were auto-posted.
+    rec = RecurringEntry.objects.create(
+        company=eg.c, name="Auto-posted rent", journal=eg.J["GEN"], frequency="monthly",
+        next_date=eg.d(6, 1), auto_post=True, created_by=eg.cfo,
+        lines=[{"account": eg.A["520201"].pk, "debit": "2000"}, {"account": eg.A["210202"].pk, "credit": "2000"}])
+    created = run_due(eg.c, eg.d(6, 1))
+    assert len(created) == 1
+    assert created[0].state == "posted"
+    assert created[0].number  # a real posted number, not the "draft #<pk>" fallback
+
+
+def test_recurring_serializer_resyncs_anchor_day_on_explicit_date_edit(eg):
+    # Item #25: anchor_day must track deliberate schedule changes made through the API, but must never
+    # be corrupted by the frontend simply echoing back a previously-fetched next_date unchanged. It's
+    # read_only in RecurringSerializer precisely so a client can't send a stale value for it directly;
+    # validate() derives it instead, based on whether next_date actually changed.
+    from apps.planning.api import RecurringSerializer
+    rec = RecurringEntry.objects.create(
+        company=eg.c, name="Rent", journal=eg.J["GEN"], frequency="monthly", next_date=eg.d(1, 31),
+        created_by=eg.cfo, lines=[{"account": eg.A["520201"].pk, "debit": "100"},
+                                  {"account": eg.A["210202"].pk, "credit": "100"}])
+    assert rec.anchor_day == 31
+    ser = RecurringSerializer(rec, data={"narration": "Monthly office rent"}, partial=True,
+                              context={"company": eg.c})
+    assert ser.is_valid(), ser.errors
+    ser.save()
+    rec.refresh_from_db()
+    assert rec.anchor_day == 31  # untouched -- next_date wasn't part of this edit
+    ser = RecurringSerializer(rec, data={"next_date": str(eg.d(2, 15))}, partial=True,
+                              context={"company": eg.c})
+    assert ser.is_valid(), ser.errors
+    ser.save()
+    rec.refresh_from_db()
+    assert rec.next_date == eg.d(2, 15) and rec.anchor_day == 15  # real intent change -- anchor follows
+
+
 # ------------------------------------------------------------------ go-live imports
 
 def test_go_live_imports_clear_opening_equity(eg):

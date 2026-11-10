@@ -60,9 +60,27 @@ class RecurringSerializer(CompanyScopedSerializer):
 
     class Meta:
         model = RecurringEntry
-        fields = ["id", "name", "journal", "journal_code", "narration", "lines", "frequency", "next_date", "end_date",
-                  "auto_post", "auto_reverse_days", "active", "last_entry", "last_entry_number"]
-        read_only_fields = ["last_entry"]
+        fields = ["id", "name", "journal", "journal_code", "narration", "lines", "frequency", "next_date",
+                  "anchor_day", "end_date", "auto_post", "auto_reverse_days", "active", "last_entry",
+                  "last_entry_number"]
+        # anchor_day is derived, not client-set (the frontend has no control for it and simply echoes
+        # back whatever a previous GET returned, which is not a reliable signal of real client intent
+        # -- see validate() below).
+        read_only_fields = ["last_entry", "anchor_day"]
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        # anchor_day is the day-of-month the schedule should really run on (see the model docstring).
+        # Resync it to next_date's day whenever next_date is actually changing -- a new template, or an
+        # explicit edit of the date -- so the user's latest intent wins. If next_date is unchanged
+        # (e.g. the user only edited the narration), leave anchor_day alone: run_due()'s own internal
+        # advancement never goes through this serializer, so this code path never sees (and can't
+        # accidentally bake in) a drift-clamped next_date.
+        if "next_date" in attrs:
+            old = getattr(self.instance, "next_date", None)
+            if old is None or attrs["next_date"] != old:
+                attrs["anchor_day"] = attrs["next_date"].day
+        return attrs
 
     def validate_lines(self, lines):
         from decimal import Decimal
