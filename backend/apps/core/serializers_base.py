@@ -44,6 +44,55 @@ class CompanyScopedSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class FieldPermissionMixin:
+    """Declarative per-field read/write gating: `field_perms = {"income_account": "ledger.account.manage"}`.
+    A field absent from the map is visible/writable to anyone who already passes the view's ordinary
+    action-level `perms` check; a mapped field additionally requires the caller to hold the listed
+    permission code to see it in a response or to change its value.
+
+    This is enforced here, in the serializer (API layer) -- not by hiding the field in a frontend
+    form, which a caller could trivially bypass by hitting the API directly. Same idea as Odoo's
+    field-level `groups=` on a field definition (server-enforced, ORM-wide) rather than its older
+    view-level `groups=` attribute (UI-only, RPC-bypassable).
+
+    Mix in ahead of CompanyScopedSerializer: `class FooSerializer(FieldPermissionMixin,
+    CompanyScopedSerializer)`.
+    """
+    field_perms = {}
+
+    def _caller_perms(self):
+        request = self.context.get("request")
+        if request is None or not getattr(request, "user", None) or not request.user.is_authenticated:
+            return None  # constructed outside a request (tests/shell/migrations) -- don't restrict
+        from apps.iam.access import effective_permissions
+        return effective_permissions(request)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        perms = self._caller_perms()
+        if perms is not None:
+            for field, code in self.field_perms.items():
+                if field in data and code not in perms:
+                    data.pop(field)
+        return data
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        perms = self._caller_perms()
+        if perms is not None:
+            for field, code in self.field_perms.items():
+                if field not in attrs or code in perms:
+                    continue
+                current = getattr(self.instance, field, None) if self.instance else None
+                if attrs[field] != current:
+                    raise serializers.ValidationError(
+                        {field: f"Missing permission to set this field: {code}"})
+                # Unchanged echo of a protected field (e.g. a stale value round-tripped by a client
+                # form) -- drop it rather than fail, same pattern as RecurringEntry.anchor_day.
+                attrs.pop(field)
+        return attrs
+
+
 class DocumentSerializer(CompanyScopedSerializer):
     """A document with nested `lines`. Lines are replaced wholesale on update, and only while the
     document is in draft."""

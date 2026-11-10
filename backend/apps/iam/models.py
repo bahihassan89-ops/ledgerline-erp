@@ -6,7 +6,7 @@ from django.db import models
 from django.utils import timezone
 
 from apps.core.crypto import EncryptedTextField
-from apps.core.models import Company
+from apps.core.models import Company, CompanyScoped
 from apps.core.signals import audited
 
 from .permissions_catalog import CATALOG, GLOBAL_CATALOG
@@ -152,6 +152,33 @@ class Membership(models.Model):
 
     def __str__(self):
         return f"{self.user} @ {self.company}"
+
+
+@audited
+class Team(CompanyScoped):
+    """A department-style grouping of Memberships within one company -- e.g. "Inventory Team",
+    "Procurement Team". A Team carries no permissions of its own (those still come from each
+    member's Role/Membership as always); it exists so the Admin/CEO/company-creator has one place
+    to see and assign who works in a given functional area per company, and is the natural home
+    for any future team-scoped record rule (e.g. restricting a warehouse to its team)."""
+    name = models.CharField(max_length=80)
+    department = models.CharField(max_length=20, default="other", choices=[
+        ("inventory", "Inventory"), ("procurement", "Procurement"), ("other", "Other")])
+    lead = models.ForeignKey("Membership", null=True, blank=True, on_delete=models.SET_NULL,
+                             related_name="led_teams")
+    members = models.ManyToManyField("Membership", blank=True, related_name="teams")
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = [("company", "name")]
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.name} ({self.company})"
+
+    def clean(self):
+        if self.lead_id and self.lead.company_id != self.company_id:
+            raise ValidationError({"lead": "Lead must belong to this company."})
 
 
 ONLINE_WINDOW = timezone.timedelta(minutes=2)

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.core.serializers_base import CompanyScopedSerializer
+from apps.core.serializers_base import CompanyScopedSerializer, FieldPermissionMixin
 
 from .models import InventoryCount, Lot, Product, ProductCategory, SerialNumber, StockMove, StockQuant, Warehouse
 
@@ -26,10 +26,21 @@ class ProductCategorySerializer(CompanyScopedSerializer):
         return attrs
 
 
-class ProductSerializer(CompanyScopedSerializer):
+class ProductSerializer(FieldPermissionMixin, CompanyScopedSerializer):
     qty_on_hand = serializers.SerializerMethodField()
     average_cost = serializers.SerializerMethodField()
     category_name = serializers.CharField(source="category.name", read_only=True)
+
+    # GL-mapping fields are an accounting decision, not an inventory one: an Inventory
+    # Manager/Officer can fully run the product catalogue (sku, pricing, reorder rules, barcodes,
+    # stock flags) without being able to see or repoint which ledger account/tax code a product
+    # posts to -- that's the Controller/Accountant's job description. See FieldPermissionMixin.
+    field_perms = {
+        "income_account": "ledger.account.manage",
+        "expense_account": "ledger.account.manage",
+        "sale_tax": "ledger.tax.manage",
+        "purchase_tax": "ledger.tax.manage",
+    }
 
     class Meta:
         model = Product

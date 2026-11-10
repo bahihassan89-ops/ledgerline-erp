@@ -10,6 +10,7 @@ CATALOG = {
     "iam.user.view": "View users",
     "iam.user.manage": "Create/disable users, assign roles",
     "iam.role.manage": "Create and edit roles",
+    "iam.team.manage": "Create/edit teams (Inventory, Procurement, ...) and assign their members/lead",
     "audit.log.view": "View the audit trail",
     "integrations.apikey.manage": "Manage integration API keys",
     "integrations.webhook.manage": "Manage webhooks",
@@ -117,11 +118,31 @@ CONTROLLER = SENIOR + [
     "core.currency.manage", "approvals.rule.manage", "audit.log.view", "assets.depreciation.run",
     "assets.asset.dispose", "ledger.revaluation.run", "ledger.import.run", "planning.budget.manage",
     "einvoice.settings.manage",
+    # The Controller/CFO is typically the person who actually set up the company (see
+    # apps.core.services._grant_submitter_membership) -- they need to be able to hire/assign roles
+    # and stand up department teams themselves, not just the System Administrator. Narrower than
+    # core.company.manage (CFO-only) since it doesn't touch company settings, just people/roles/teams.
+    "iam.user.manage", "iam.role.manage", "iam.team.manage",
 ]
 CFO = CONTROLLER + ["ledger.period.lock", "ledger.year.close", "core.company.manage"]
 AUDITOR = VIEW_ALL + ["audit.log.view"]
-ADMIN = ["iam.user.view", "iam.user.manage", "iam.role.manage", "core.company.view", "audit.log.view",
-         "integrations.apikey.manage", "integrations.webhook.manage"]
+ADMIN = ["iam.user.view", "iam.user.manage", "iam.role.manage", "iam.team.manage", "core.company.view",
+         "audit.log.view", "integrations.apikey.manage", "integrations.webhook.manage"]
+
+# Inventory department ladder: day-to-day stock handling vs. full product/valuation ownership.
+INVENTORY_OFFICER = ["inventory.product.view", "inventory.stock.view", "inventory.stock.move"]
+INVENTORY_MANAGER = sorted(set(INVENTORY_OFFICER + [
+    "inventory.product.manage", "inventory.stock.adjust", "inventory.valuation.view",
+    "inventory.landed_cost.manage", "approvals.request.decide",
+]))
+
+# Procurement department ladder: raising/placing orders vs. confirming them and managing vendors.
+PROCUREMENT_OFFICER = ["purchasing.order.view", "purchasing.order.create", "partners.partner.view",
+                       "inventory.product.view"]
+PROCUREMENT_MANAGER = sorted(set(PROCUREMENT_OFFICER + [
+    "purchasing.order.confirm", "purchasing.order.cancel", "partners.partner.manage",
+    "approvals.request.decide",
+]))
 
 # name, level, permissions, approval_limit (None = unlimited)
 DEFAULT_ROLES = [
@@ -132,6 +153,10 @@ DEFAULT_ROLES = [
     ("CFO / Finance Director", 5, CFO, None),
     ("Auditor (read-only)", 0, AUDITOR, "0"),
     ("System Administrator", 0, ADMIN, "0"),
+    ("Inventory Officer", 1, INVENTORY_OFFICER, "0"),
+    ("Inventory Manager", 3, INVENTORY_MANAGER, "25000"),
+    ("Procurement Officer", 1, PROCUREMENT_OFFICER, "0"),
+    ("Procurement Manager", 3, PROCUREMENT_MANAGER, "50000"),
 ]
 
 # Company-independent permissions: cross-company/central authority that doesn't belong to any

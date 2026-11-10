@@ -1,7 +1,9 @@
 from django.contrib.auth import password_validation
 from rest_framework import serializers
 
-from .models import DailyActivitySummary, GlobalRole, Membership, PresenceEvent, Role, User, UserPresence
+from apps.core.serializers_base import CompanyScopedSerializer
+
+from .models import DailyActivitySummary, GlobalRole, Membership, PresenceEvent, Role, Team, User, UserPresence
 from .permissions_catalog import CATALOG, GLOBAL_CATALOG
 from .presence import today_minutes
 
@@ -60,6 +62,26 @@ class GlobalRoleSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"permissions": f"You cannot grant global permissions you don't have: {', '.join(sorted(extra))}"})
         return attrs
+
+
+class TeamSerializer(CompanyScopedSerializer):
+    """A department grouping (Inventory Team, Procurement Team, ...). `lead`/`member_ids` are
+    checked against the caller's company by CompanyScopedSerializer.validate() (every FK/M2M value
+    must belong to `self.context['company']`)."""
+    lead_name = serializers.SerializerMethodField()
+    member_ids = serializers.PrimaryKeyRelatedField(source="members", many=True, queryset=Membership.objects.all(),
+                                                     required=False)
+    member_names = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Team
+        fields = ["id", "name", "department", "lead", "lead_name", "member_ids", "member_names", "active"]
+
+    def get_lead_name(self, obj):
+        return obj.lead.user.get_full_name() or obj.lead.user.username if obj.lead_id else ""
+
+    def get_member_names(self, obj):
+        return [m.user.get_full_name() or m.user.username for m in obj.members.all()]
 
 
 class UserPresenceSerializer(serializers.ModelSerializer):

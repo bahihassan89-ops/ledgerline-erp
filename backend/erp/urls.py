@@ -13,7 +13,7 @@ from apps.core.views import (AuditLogViewSet, BackupView, BranchViewSet, Company
                              ExchangeRateViewSet, ExportXlsxView, NotificationViewSet, PushSubscriptionViewSet)
 from apps.iam import auth_views
 from apps.iam.views import (GlobalPermissionCatalogView, GlobalRoleViewSet, HeartbeatView, PermissionCatalogView,
-                            RoleViewSet, TeamActivityViewSet, UserViewSet)
+                            RoleViewSet, TeamActivityViewSet, TeamViewSet, UserViewSet)
 from apps.integrations.views import ApiKeyViewSet, WebhookDeliveryViewSet, WebhookViewSet
 from apps.inventory.views import (InventoryCountViewSet, LotViewSet, ProductCategoryViewSet, ProductViewSet,
                                   SerialNumberViewSet, StockMoveViewSet, StockQuantViewSet, WarehouseViewSet)
@@ -43,6 +43,7 @@ r.register("branches", BranchViewSet)
 r.register("audit-log", AuditLogViewSet)
 r.register("users", UserViewSet, basename="user")
 r.register("roles", RoleViewSet)
+r.register("teams", TeamViewSet)
 r.register("accounts", AccountViewSet)
 r.register("journals", JournalViewSet)
 r.register("taxes", TaxViewSet)

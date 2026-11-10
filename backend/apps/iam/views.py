@@ -10,10 +10,10 @@ from apps.core.exceptions import BusinessError
 
 from . import presence
 from .access import ErpPermission, GlobalPermission, resolve_company
-from .models import GlobalRole, PresenceEvent, Role, User, UserPresence
+from .models import GlobalRole, PresenceEvent, Role, Team, User, UserPresence
 from .permissions_catalog import CATALOG, GLOBAL_CATALOG
-from .serializers import (GlobalRoleSerializer, PresenceEventSerializer, RoleSerializer, UserPresenceSerializer,
-                          UserSerializer)
+from .serializers import (GlobalRoleSerializer, PresenceEventSerializer, RoleSerializer, TeamSerializer,
+                          UserPresenceSerializer, UserSerializer)
 
 
 class RoleViewSet(CompanyViewSet):
@@ -29,6 +29,18 @@ class RoleViewSet(CompanyViewSet):
         if instance.membership_set.exists():
             raise BusinessError("Role is assigned to users; deactivate it instead.", "in_use")
         instance.delete()
+
+
+class TeamViewSet(CompanyViewSet):
+    """Department groupings (Inventory Team, Procurement Team, ...). Gated by iam.team.manage --
+    narrower than iam.role.manage, which also lets its holder redefine what any role grants --
+    so System Administrator, CEO/global roles and the company's own Controller/CFO (the person
+    who typically created it, see apps.core.services._grant_submitter_membership) can staff a
+    team without needing full rights to rewrite the role catalog."""
+    queryset = Team.objects.select_related("lead__user").prefetch_related("members__user")
+    serializer_class = TeamSerializer
+    perms = {"list": "iam.user.view", "*": "iam.team.manage"}
+    pagination_class = None
 
 
 class UserViewSet(viewsets.ModelViewSet):
