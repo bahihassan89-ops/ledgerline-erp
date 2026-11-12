@@ -1,6 +1,6 @@
 argon2-cffi==25.1.0
 cryptography==50.0.2
-Django==5.2.18
+Django==5.2.19
 django-cors-headers==4.9.0
 django-filter==26.2
 djangorestframework==3.18.3
@@ -8,10 +8,10 @@ djangorestframework_simplejwt==5.5.1
 drf-spectacular==0.30.0
 gunicorn==26.2.0
 openpyxl==3.1.5
-psycopg==3.3.6
-psycopg-binary==3.3.6
+psycopg==3.3.8
+psycopg-binary==3.3.8
 PyOTP==2.10.0
-pywebpush==2.1.0
-sentry-sdk==2.73.0
-pytest==9.1.1
+pywebpush==2.5.0
+sentry-sdk==2.74.0
+pytest==9.2.0
 pytest-django==4.14.0
