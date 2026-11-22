@@ -33,6 +33,7 @@ CATALOG = {
     "partners.partner.view": "View customers and vendors",
     "partners.partner.manage": "Create/edit customers and vendors",
     "partners.credit_limit.manage": "Change customer credit limits",
+    "partners.bank_change.verify": "Confirm vendor/customer bank-detail changes by independent callback",
     # Inventory
     "inventory.product.view": "View products",
     "inventory.product.manage": "Create/edit products, categories, warehouses",
@@ -115,6 +116,7 @@ SENIOR = ACCOUNTANT + [
 CONTROLLER = SENIOR + [
     "ledger.account.manage", "ledger.journal.manage", "ledger.tax.manage", "ledger.period.manage",
     "ledger.period.close", "ledger.period.post_closed", "partners.credit_limit.manage",
+    "partners.bank_change.verify",
     "core.currency.manage", "approvals.rule.manage", "audit.log.view", "assets.depreciation.run",
     "assets.asset.dispose", "ledger.revaluation.run", "ledger.import.run", "planning.budget.manage",
     "einvoice.settings.manage",

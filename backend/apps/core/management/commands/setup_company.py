@@ -227,6 +227,10 @@ def setup(company, vat, year, egypt=None):
         # threshold is set well below the ordinary invoice/bill ones above.
         ("Customer return above threshold → Controller", "customer_return", 20000, [4]),
         ("Vendor return above threshold → Controller", "vendor_return", 20000, [4]),
+        # Bank-detail changes are a BEC/vendor-impersonation fraud vector, not a size-of-transaction
+        # risk, so unlike the other rules above this one always matches (min_amount=0 regardless of
+        # currency/k) -- see apps.partners.services.request_bank_change.
+        ("Vendor/customer bank-detail change → Controller", "partner_bank_change", 0, [4]),
     ]:
         ApprovalRule.objects.create(company=company, name=name, document_type=dtype, min_amount=amount * k,
                                     approver_levels=levels)

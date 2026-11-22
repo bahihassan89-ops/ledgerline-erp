@@ -18,6 +18,7 @@ class DocumentType(models.TextChoices):
     PAYMENT = "payment", "Payment"
     JOURNAL_ENTRY = "journal_entry", "Manual journal entry"
     INVENTORY_COUNT = "inventory_count", "Inventory count adjustment"
+    PARTNER_BANK_CHANGE = "partner_bank_change", "Vendor/customer bank-detail change"
 
 
 @audited

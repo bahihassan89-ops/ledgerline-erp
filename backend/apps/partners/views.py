@@ -1,4 +1,5 @@
 from django.db.models import Sum
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -9,9 +10,9 @@ from apps.integrations.events import emit
 from apps.ledger.models import JournalLine
 from apps.ledger.views import parse_date
 
-from .models import Partner, PaymentTerm
-from .serializers import PartnerSerializer, PaymentTermSerializer
-from .services import sync_intercompany_mirror
+from .models import Partner, PartnerBankChangeRequest, PaymentTerm
+from .serializers import PartnerBankChangeRequestSerializer, PartnerSerializer, PaymentTermSerializer
+from .services import apply_bank_change, request_bank_change, sync_intercompany_mirror, verify_bank_change
 
 
 class PaymentTermViewSet(CompanyViewSet):
@@ -64,3 +65,41 @@ class PartnerViewSet(CompanyViewSet):
         return Response({"partner": {"id": p.pk, "code": p.code, "name": p.name}, "opening_balance": str(opening),
                          "closing_balance": str(bal), "rows": rows,
                          "note": "Positive balance = partner owes us; negative = we owe the partner."})
+
+
+class PartnerBankChangeRequestViewSet(CompanyViewSet):
+    """Maker-checker workflow for vendor/customer bank-detail changes (item #34). Creating a request
+    here never touches Partner.bank_* -- it only takes effect once `decide` (the generic
+    apps.approvals endpoint) approves it AND `verify`/`apply` below have both run. See
+    apps.partners.services for the full rationale."""
+    queryset = PartnerBankChangeRequest.objects.select_related("partner", "verification")
+    serializer_class = PartnerBankChangeRequestSerializer
+    http_method_names = ["get", "post", "head", "options"]
+    perms = {"list": "partners.partner.view", "retrieve": "partners.partner.view",
+             "create": "partners.partner.manage", "verify": "partners.bank_change.verify",
+             "apply": "partners.partner.manage"}
+    filterset_fields = ["partner", "state"]
+
+    def create(self, request, *args, **kwargs):
+        s = self.get_serializer(data=request.data)
+        s.is_valid(raise_exception=True)
+        v = s.validated_data
+        partner = get_object_or_404(Partner, pk=v["partner"].pk, company=self.company)
+        req = request_bank_change(
+            partner, request.user, bank_name=v.get("bank_name", ""),
+            bank_account_number=v.get("bank_account_number", ""), iban=v.get("iban", ""),
+            swift_bic=v.get("swift_bic", ""), bank_country=v.get("bank_country", ""),
+            reason_code=v.get("reason_code", ""), reason=v.get("reason", ""))
+        return Response(self.get_serializer(req).data, status=201)
+
+    @action(detail=True, methods=["post"])
+    def verify(self, request, pk=None):
+        req = self.get_object()
+        verify_bank_change(req, request.user, request.data.get("phone_called", ""),
+                           notes=request.data.get("notes", ""))
+        return Response(self.get_serializer(req).data)
+
+    @action(detail=True, methods=["post"])
+    def apply(self, request, pk=None):
+        apply_bank_change(self.get_object(), request.user)
+        return Response(self.get_serializer(self.get_object()).data)

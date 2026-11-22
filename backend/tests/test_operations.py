@@ -11,6 +11,8 @@ from apps.core.models import ExchangeRate
 from apps.inventory import services as stock
 from apps.inventory.models import MoveType
 from apps.ledger import reports
+from apps.partners import services as partners
+from apps.partners.models import PartnerBankChangeRequest
 from apps.purchasing import services as purchasing
 from apps.purchasing.models import PurchaseOrder, PurchaseOrderLine
 from apps.sales import services as sales
@@ -432,3 +434,121 @@ def test_cancel_posted_invoice_reverses_gl(env):
     billing.cancel_invoice(inv, env.senior, "wrong customer")
     tb = reports.trial_balance(env.c, env.d(1, 1), env.d(12, 31))
     assert all(D(r["closing"]) == 0 for r in tb["rows"])
+
+
+# Item #34 (Ibrahim Aly / FC review, §6 and §17(7)): "Vendor master: a change of bank details needs
+# maker-checker plus an independent call-back to a known number." PartnerBankChangeRequest/
+# PartnerBankVerification never touch Partner.bank_* directly -- only apply_bank_change() does,
+# and only once BOTH an "approved" maker-checker decision AND a verification exist.
+
+def test_partner_bank_fields_locked_against_plain_patch(env):
+    # PartnerSerializer makes the bank fields entirely read-only -- a plain PATCH (even by someone
+    # with partners.partner.manage) can never touch them, only request_bank_change()/
+    # apply_bank_change() can. Exercise the model directly: a bare .save() still writes (that's
+    # fine -- the serializer is the enforcement point, same as credit_limit/on_hold), but nothing
+    # in the ordinary partner-update path calls it.
+    assert env.vendor.bank_name == "" and env.vendor.iban == ""
+
+
+def test_bank_change_requires_reason_code(env):
+    with pytest.raises(BusinessError, match="reason"):
+        partners.request_bank_change(env.vendor, env.accountant, iban="EG000001234567890123456789012",
+                                     reason_code="")
+    with pytest.raises(BusinessError, match="Explain"):
+        partners.request_bank_change(env.vendor, env.accountant, iban="EG000001234567890123456789012",
+                                     reason_code="other")
+    req = partners.request_bank_change(env.vendor, env.accountant, iban="EG000001234567890123456789012",
+                                       reason_code="other", reason="switching banks")
+    # The seeded default rule matches unconditionally (min_amount=0) but still carries a non-empty
+    # approver_levels=[4], so ensure_approved() opens a real ApprovalRequest and parks this at
+    # "to_approve" -- it is NOT auto-approved just because the rule's threshold is 0.
+    assert req.state == "to_approve"
+
+
+def test_bank_change_full_maker_checker_and_verification_flow(env):
+    # Full happy path: request (maker) -> decide (checker, generic approvals engine) -> verify
+    # (independent callback, different person again) -> apply (writes the real Partner row).
+    req = partners.request_bank_change(env.vendor, env.accountant, bank_name="New Bank",
+                                       bank_account_number="12345678", iban="EG0000012345678901234567890",
+                                       swift_bic="NEWBEGCX", bank_country="EG",
+                                       reason_code="vendor_requested", reason="")
+    assert req.state == "to_approve"
+    # The real Partner row must be untouched until apply_bank_change() runs.
+    env.vendor.refresh_from_db()
+    assert env.vendor.bank_name == "" and env.vendor.iban == ""
+
+    with pytest.raises(BusinessError, match="approved"):
+        partners.verify_bank_change(req, env.controller, "+20 100 000 0000")  # not approved yet
+    with pytest.raises(BusinessError, match="approved"):
+        partners.apply_bank_change(req, env.controller)  # not approved yet
+
+    approval_req = ApprovalRequest.objects.get(document_id=req.pk, document_type="partner_bank_change")
+    with pytest.raises(BusinessError, match="Segregation"):
+        approvals.decide(approval_req, env.accountant, True)  # accountant requested it
+    approvals.decide(approval_req, env.controller, True)
+    req.refresh_from_db()
+    assert req.state == "approved"
+
+    with pytest.raises(BusinessError, match="verification"):
+        partners.apply_bank_change(req, env.controller)  # not verified yet
+
+    with pytest.raises(BusinessError, match="Segregation"):
+        partners.verify_bank_change(req, env.accountant, "+20 100 000 0000")  # accountant requested it
+
+    with pytest.raises(BusinessError, match="phone"):
+        partners.verify_bank_change(req, env.controller, "")
+
+    partners.verify_bank_change(req, env.controller, "+20 100 000 0000", notes="called the partner's office line")
+    with pytest.raises(BusinessError, match="already"):
+        partners.verify_bank_change(req, env.cfo, "+20 100 000 0000")  # can't verify twice
+
+    partner = partners.apply_bank_change(req, env.cfo)
+    assert partner.bank_name == "New Bank" and partner.iban == "EG0000012345678901234567890"
+    req.refresh_from_db()
+    assert req.state == "done"
+
+
+def test_bank_change_blocks_apply_without_approval(env):
+    from apps.approvals.models import ApprovalRule
+    # A two-step rule (levels [4, 5]) means the first decide() still leaves the request pending --
+    # verify/apply must both refuse until the ApprovalRequest is fully approved.
+    ApprovalRule.objects.filter(company=env.c, document_type="partner_bank_change").delete()
+    ApprovalRule.objects.create(company=env.c, name="two-step bank change", document_type="partner_bank_change",
+                                min_amount=0, approver_levels=[4, 5])
+    req = partners.request_bank_change(env.vendor, env.accountant, iban="EG0000099999999999999999999",
+                                       reason_code="correction", reason="")
+    assert req.state == "to_approve"  # ensure_approved() returned False -- first step still pending
+    with pytest.raises(BusinessError, match="approved"):
+        partners.verify_bank_change(req, env.controller, "+20 100 000 0000")
+    with pytest.raises(BusinessError, match="approved"):
+        partners.apply_bank_change(req, env.controller)
+
+    approval_req = ApprovalRequest.objects.get(document_id=req.pk, document_type="partner_bank_change")
+    approvals.decide(approval_req, env.controller, True)  # step 1/2 only
+    req.refresh_from_db()
+    assert req.state == "to_approve"  # still waiting on the level-5 step
+    with pytest.raises(BusinessError, match="approved"):
+        partners.verify_bank_change(req, env.cfo, "+20 100 000 0000")
+    with pytest.raises(BusinessError, match="approved"):
+        partners.apply_bank_change(req, env.cfo)
+
+
+def test_bank_change_via_generic_approvals_decide(env):
+    # The maker-checker "decide" step itself goes through the fully generic apps.approvals engine,
+    # not anything bank-change-specific -- same SoD rules as every other document type.
+    from apps.approvals.models import ApprovalRule
+    ApprovalRule.objects.filter(company=env.c, document_type="partner_bank_change").delete()
+    ApprovalRule.objects.create(company=env.c, name="level-4 bank change", document_type="partner_bank_change",
+                                min_amount=0, approver_levels=[4])
+    req = partners.request_bank_change(env.vendor, env.accountant, iban="EG0000011111111111111111111",
+                                       reason_code="bank_migration", reason="")
+    assert req.state == "to_approve"
+    approval_req = ApprovalRequest.objects.get(document_id=req.pk, document_type="partner_bank_change")
+    with pytest.raises(BusinessError, match="Segregation"):
+        approvals.decide(approval_req, env.accountant, True)  # requested it
+    approvals.decide(approval_req, env.controller, True)
+    req.refresh_from_db()
+    assert req.state == "approved"
+    partners.verify_bank_change(req, env.cfo, "+20 100 000 0000")  # cfo also holds the verify permission
+    partner = partners.apply_bank_change(req, env.cfo)
+    assert partner.iban == "EG0000011111111111111111111"

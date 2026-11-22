@@ -2,7 +2,7 @@ from rest_framework import serializers
 
 from apps.core.serializers_base import CompanyScopedSerializer
 
-from .models import Partner, PaymentTerm
+from .models import BankChangeReasonCode, Partner, PartnerBankChangeRequest, PartnerBankVerification, PaymentTerm
 
 
 class PaymentTermSerializer(CompanyScopedSerializer):
@@ -16,12 +16,20 @@ class PartnerSerializer(CompanyScopedSerializer):
 
     class Meta:
         model = Partner
+        # bank_name/bank_account_number/iban/swift_bic/bank_country are intentionally included as
+        # read-only below, not omitted -- callers can still see the current bank details here, but
+        # the ONLY way to change them is apps.partners.services.request_bank_change() /
+        # PartnerBankChangeRequestViewSet, which routes through maker-checker approval plus an
+        # independent callback verification (see item #34). A plain PATCH on this serializer can
+        # never touch them, even for a user who otherwise has partners.partner.manage.
         fields = ["id", "code", "name", "name_ar", "is_customer", "is_vendor", "tax_number", "email", "phone",
                   "address", "country", "currency", "payment_term", "credit_limit", "credit_check", "on_hold",
                   "receivable_account", "payable_account", "withholding_tax", "eta_receiver_type", "national_id",
                   "governate", "region_city", "street", "building_number", "postal_code", "notes",
-                  "is_intercompany", "linked_company", "mirror_partner", "mirror_partner_name", "active"]
-        read_only_fields = ["mirror_partner"]
+                  "is_intercompany", "linked_company", "mirror_partner", "mirror_partner_name", "active",
+                  "bank_name", "bank_account_number", "iban", "swift_bic", "bank_country"]
+        read_only_fields = ["mirror_partner", "bank_name", "bank_account_number", "iban", "swift_bic",
+                           "bank_country"]
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -58,3 +66,29 @@ class PartnerSerializer(CompanyScopedSerializer):
                 raise serializers.ValidationError({"linked_company": "An intercompany partner cannot link to its "
                                                                      "own company."})
         return attrs
+
+
+class PartnerBankVerificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PartnerBankVerification
+        fields = ["id", "verified_by", "verified_at", "phone_called", "notes"]
+        read_only_fields = ["id", "verified_by", "verified_at"]
+
+
+class PartnerBankChangeRequestSerializer(CompanyScopedSerializer):
+    """Read/write for the maker-checker bank-detail-change workflow (item #34). Creation goes through
+    request_bank_change() (see PartnerBankChangeRequestViewSet.perform_create), not a bare .save(),
+    so the mandatory reason_code/reason validation and the ensure_approved() call always run."""
+    partner_name = serializers.CharField(source="partner.name", read_only=True)
+    verification = PartnerBankVerificationSerializer(read_only=True)
+
+    class Meta:
+        model = PartnerBankChangeRequest
+        fields = ["id", "partner", "partner_name", "bank_name", "bank_account_number", "iban", "swift_bic",
+                  "bank_country", "reason_code", "reason", "state", "verification", "created_at", "created_by"]
+        read_only_fields = ["id", "state", "verification", "created_at", "created_by"]
+
+    def validate_reason_code(self, value):
+        if value not in BankChangeReasonCode.values:
+            raise serializers.ValidationError("Choose a reason for this bank-detail change.")
+        return value

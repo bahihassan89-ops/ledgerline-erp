@@ -20,7 +20,7 @@ from apps.inventory.views import (InventoryCountViewSet, LotViewSet, ProductCate
 from apps.ledger.dashboard import DashboardView
 from apps.ledger.views import (AccountingSettingsView, AccountViewSet, FiscalPeriodViewSet, FiscalYearViewSet,
                                GlobalReportView, JournalEntryViewSet, JournalViewSet, ReportView, TaxViewSet)
-from apps.partners.views import PartnerViewSet, PaymentTermViewSet
+from apps.partners.views import PartnerBankChangeRequestViewSet, PartnerViewSet, PaymentTermViewSet
 from apps.purchasing.views import PurchaseOrderViewSet
 from apps.sales.views import SalesOrderViewSet
 from apps.assets.api import AssetCategoryViewSet, AssetViewSet
@@ -51,6 +51,7 @@ r.register("fiscal-years", FiscalYearViewSet)
 r.register("fiscal-periods", FiscalPeriodViewSet)
 r.register("journal-entries", JournalEntryViewSet)
 r.register("partners", PartnerViewSet)
+r.register("partner-bank-change-requests", PartnerBankChangeRequestViewSet)
 r.register("payment-terms", PaymentTermViewSet)
 r.register("product-categories", ProductCategoryViewSet)
 r.register("products", ProductViewSet)

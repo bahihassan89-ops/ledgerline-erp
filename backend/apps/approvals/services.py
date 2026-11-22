@@ -17,6 +17,7 @@ DOC_MODELS = {
     DocumentType.PAYMENT: "billing.Payment",
     DocumentType.JOURNAL_ENTRY: "ledger.JournalEntry",
     DocumentType.INVENTORY_COUNT: "inventory.InventoryCount",
+    DocumentType.PARTNER_BANK_CHANGE: "partners.PartnerBankChangeRequest",
 }
 
 
