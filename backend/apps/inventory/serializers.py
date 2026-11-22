@@ -124,7 +124,7 @@ class InventoryCountSerializer(CompanyScopedSerializer):
     class Meta:
         model = InventoryCount
         fields = ["id", "warehouse", "warehouse_code", "product", "product_sku", "date", "counted_qty", "unit_cost",
-                  "reason", "state", "diff_qty", "value", "move", "move_number"]
+                  "reason", "root_cause_code", "state", "diff_qty", "value", "move", "move_number"]
         read_only_fields = ["state", "diff_qty", "value", "move"]
 
 

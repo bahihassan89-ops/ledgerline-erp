@@ -121,6 +121,7 @@ class StockOpSerializer(serializers.Serializer):
     counter_account = serializers.IntegerField(required=False)
     date = serializers.DateField(required=False)
     reason = serializers.CharField(required=False, allow_blank=True, max_length=200)
+    root_cause_code = serializers.CharField(required=False, allow_blank=True, max_length=24)
     lot_number = serializers.CharField(required=False, allow_blank=True, max_length=60)
     serials = serializers.ListField(child=serializers.CharField(max_length=80), required=False)
     partner = serializers.IntegerField(required=False)
@@ -158,7 +159,8 @@ class StockMoveViewSet(CompanyReadOnlyViewSet):
         if v.get("counted_qty") is None:
             raise serializers.ValidationError({"counted_qty": "Required."})
         count = services.adjust(self.company, v["product"], v["warehouse"], v["counted_qty"], v["date"],
-                                request.user, unit_cost=v.get("unit_cost"), reason=v.get("reason", ""))
+                                request.user, unit_cost=v.get("unit_cost"), reason=v.get("reason", ""),
+                                root_cause_code=v.get("root_cause_code", ""))
         if count.state == "to_approve":
             return Response({"pending_approval": True, "id": count.id, "diff_qty": count.diff_qty,
                              "value": count.value, "message": "This adjustment is large enough to need "

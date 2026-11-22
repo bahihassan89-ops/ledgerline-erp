@@ -73,6 +73,51 @@ def test_stock_valuation_equals_gl(env):
     assert D(v["total_value"]) == D(gl_inv["closing"])
 
 
+def test_inventory_count_below_threshold_applies_without_root_cause(env):
+    # Item #33: the root-cause requirement only bites once a count crosses the same ApprovalRule
+    # threshold that would require approval -- small routine counts keep working exactly as before.
+    receive(env, env.avg_prod, 4, D("3.3333"), 1)
+    count = stock.adjust(env.c, env.avg_prod, env.wh, 6, env.d(5, 21), env.cfo, reason="count")
+    assert count.state == "done" and count.move is not None and count.root_cause_code == ""
+
+
+def test_inventory_count_above_threshold_requires_root_cause(env):
+    # Default "Large inventory count variance -> Controller" rule fires at 25,000 (see setup_company.py)
+    # -- well above that, a structured root cause is mandatory, mirroring ReturnReason from item #32.
+    with pytest.raises(BusinessError, match="root cause"):
+        stock.adjust(env.c, env.fifo_prod, env.wh, 100, env.d(5, 21), env.cfo, unit_cost=300, reason="count")
+    with pytest.raises(BusinessError, match="Explain"):
+        stock.adjust(env.c, env.fifo_prod, env.wh, 100, env.d(5, 21), env.cfo, unit_cost=300,
+                     root_cause_code="other")
+    count = stock.adjust(env.c, env.fifo_prod, env.wh, 100, env.d(5, 21), env.cfo, unit_cost=300,
+                         root_cause_code="counting_error", reason="annual count variance")
+    assert count.state == "to_approve"
+    req = ApprovalRequest.objects.get(document_id=count.pk, document_type="inventory_count")
+    approvals.decide(req, env.controller, True)
+    count.refresh_from_db()
+    assert count.state == "approved"
+    count = stock.apply_count(count, env.controller)
+    assert count.state == "done" and count.move is not None
+
+
+def test_inventory_count_approval_not_netted_across_products(env):
+    # A surplus on one product and a shortage on another must each be judged solely on their own
+    # abs(diff)*cost, never summed/netted together to dodge the threshold. There is also no bulk
+    # multi-row count submission in the API, so this locks in that every call is independently gated.
+    receive(env, env.fifo_prod, 100, D("300"), 1)  # on-hand value 30,000
+    surplus = stock.adjust(env.c, env.avg_prod, env.wh, 100, env.d(5, 21), env.cfo, unit_cost=300,
+                           root_cause_code="receiving_error", reason="surplus found on recount")
+    shortage = stock.adjust(env.c, env.fifo_prod, env.wh, 0, env.d(5, 22), env.cfo,
+                            root_cause_code="theft_shrinkage", reason="shrinkage on recount")
+    assert surplus.state == "to_approve" and surplus.value == D(30000)
+    assert shortage.state == "to_approve" and shortage.value == D(30000)
+    # If these had been netted, the combined variance would be ~0 and neither would need approval --
+    # confirm both independently do, each for its own full value.
+    reqs = ApprovalRequest.objects.filter(document_type="inventory_count")
+    assert reqs.count() == 2
+    assert {r.amount for r in reqs} == {D(30000)}
+
+
 def _po(env, qty=10, price=100, user=None):
     po = PurchaseOrder.objects.create(company=env.c, partner=env.vendor, date=env.d(6, 1), currency_id="USD",
                                       warehouse=env.wh, created_by=user or env.clerk)

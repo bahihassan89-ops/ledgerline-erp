@@ -6,6 +6,21 @@ import { useAuth } from '../lib/auth'
 import { fmtDate, label, money, num, qty, today } from '../lib/format'
 import { invalidateOptions, useFetch } from '../lib/hooks'
 
+// Mirrors apps.inventory.models.CountRootCause -- keep in sync with the backend choices.
+// Item #33: a count adjustment large enough to need approval must also carry a structured,
+// reportable root cause, not just a free-text afterthought (same rationale as item #32's
+// ReturnReason). Required only once the variance crosses the approval threshold -- enforced
+// server-side, since that threshold is a per-company ApprovalRule the frontend doesn't know.
+const COUNT_ROOT_CAUSES: [string, string][] = [
+  ['counting_error', 'Counting / data-entry error'],
+  ['theft_shrinkage', 'Theft or shrinkage'],
+  ['damage_breakage', 'Damage or breakage'],
+  ['receiving_error', 'Receiving error (wrong quantity booked in)'],
+  ['system_error', 'System / posting error'],
+  ['expiry_waste', 'Expiry or waste'],
+  ['other', 'Other (explain in notes)'],
+]
+
 export function Products() {
   const { can } = useAuth()
   const [search, setSearch] = useState('')
@@ -146,7 +161,7 @@ function WarehouseForm({ initial, onClose, onSaved }: any) {
 
 function StockOp({ op, onClose, onDone }: any) {
   const isConsignment = op === 'consignment-receive' || op === 'consignment-return'
-  const [f, setF] = useState<any>({ product: null, warehouse: null, date: today(), quantity: '', counted_qty: '', unit_cost: '', to_warehouse: null, counter_account: null, partner: null, reason: '' })
+  const [f, setF] = useState<any>({ product: null, warehouse: null, date: today(), quantity: '', counted_qty: '', unit_cost: '', to_warehouse: null, counter_account: null, partner: null, reason: '', root_cause_code: '' })
   const { run, busy } = useAction()
   const toast = useToast()
   const set = (k: string, v: any) => setF({ ...f, [k]: v })
@@ -177,7 +192,13 @@ function StockOp({ op, onClose, onDone }: any) {
         {isConsignment && <Field label="Partner" hint="Defaults to the warehouse's consignment partner"><PartnerSelect allowEmpty value={f.partner} onChange={(v) => set('partner', v)} /></Field>}
       </div>
       {op === 'opening' && <Field label="Offset account" hint="Usually Opening Balance Equity"><AccountSelect value={f.counter_account} onChange={(v) => set('counter_account', v)} filter={(a) => a.account_class === 'equity'} /></Field>}
-      <Field label="Reason / reference"><input value={f.reason} onChange={(e) => set('reason', e.target.value)} /></Field>
+      {op === 'adjust' && <Field label="Root cause" hint="Required if this variance is large enough to need approval">
+        <select value={f.root_cause_code} onChange={(e) => set('root_cause_code', e.target.value)}>
+          <option value="">Select if known…</option>
+          {COUNT_ROOT_CAUSES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+      </Field>}
+      <Field label={op === 'adjust' && f.root_cause_code === 'other' ? 'Explain (required)' : 'Reason / reference'}><input value={f.reason} onChange={(e) => set('reason', e.target.value)} /></Field>
     </Modal>
   )
 }

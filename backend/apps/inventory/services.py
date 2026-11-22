@@ -16,8 +16,8 @@ from apps.core.models import Sequence
 from apps.core.money import ZERO, D, round_to
 from apps.ledger import services as gl
 
-from .models import (INBOUND, ConsignmentDirection, CostLayer, CostMethod, InventoryCount, Lot, MoveType,
-                     ProductValuation, SerialNumber, SerialStatus, StockMove, StockMoveSerial, StockQuant)
+from .models import (INBOUND, ConsignmentDirection, CostLayer, CostMethod, CountRootCause, InventoryCount, Lot,
+                     MoveType, ProductValuation, SerialNumber, SerialStatus, StockMove, StockMoveSerial, StockQuant)
 
 
 def _lock_valuation(company, product):
@@ -240,14 +240,15 @@ def issue(company, product, warehouse, qty, on_date, user, *, counter_account,
 
 
 @transaction.atomic
-def adjust(company, product, warehouse, counted_qty, on_date, user, *, unit_cost=None, reason=""):
+def adjust(company, product, warehouse, counted_qty, on_date, user, *, unit_cost=None, reason="",
+           root_cause_code=""):
     """Physical count: set on-hand to `counted_qty`. Gains are valued at `unit_cost` or current average.
     Creates an InventoryCount record and routes it through apply_count() so large variances (per an
-    ApprovalRule for document_type='inventory_count') are gated by approval instead of booked
-    straight away -- see the FC review comment on count-adjustment controls."""
+    ApprovalRule for document_type='inventory_count') are gated by approval and a recorded root cause
+    instead of booked straight away -- see the FC review comment on count-adjustment controls."""
     count = InventoryCount.objects.create(company=company, product=product, warehouse=warehouse, date=on_date,
                                           counted_qty=counted_qty, unit_cost=unit_cost, reason=reason,
-                                          created_by=user)
+                                          root_cause_code=root_cause_code, created_by=user)
     return apply_count(count, user)
 
 
@@ -255,7 +256,11 @@ def adjust(company, product, warehouse, counted_qty, on_date, user, *, unit_cost
 def apply_count(count, user):
     """Computes the on-hand variance for `count`, requests approval if a matching ApprovalRule
     applies, and only then books the StockMove. Returns the InventoryCount: check `.state` --
-    'to_approve' means it is now waiting, anything else (normally 'done') has `.move` set."""
+    'to_approve' means it is now waiting, anything else (normally 'done') has `.move` set.
+
+    This variance is always this single row's own abs(diff)*cost -- never combined with any other
+    product's or warehouse's count -- so a surplus here can never be netted against a shortage
+    elsewhere to dodge the threshold below."""
     count = InventoryCount.objects.select_for_update().select_related("company", "product", "warehouse").get(
         pk=count.pk)
     company = count.company
@@ -276,7 +281,14 @@ def apply_count(count, user):
     count.save(update_fields=["diff_qty", "value"])
 
     from apps.approvals.models import DocumentType
-    from apps.approvals.services import ensure_approved
+    from apps.approvals.services import ensure_approved, find_rule
+    rule = find_rule(company, DocumentType.INVENTORY_COUNT, value)
+    if rule and rule.approver_levels:
+        if count.root_cause_code not in CountRootCause.values:
+            raise BusinessError("This variance needs approval -- choose a root cause before submitting.",
+                                "root_cause_required")
+        if count.root_cause_code == CountRootCause.OTHER and not count.reason.strip():
+            raise BusinessError("Explain the root cause when 'Other' is selected.", "root_cause_explanation_required")
     if not ensure_approved(company, DocumentType.INVENTORY_COUNT, count, value, user):
         return count  # now waiting for approval
 

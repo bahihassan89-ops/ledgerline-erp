@@ -284,11 +284,33 @@ class CostLayer(models.Model):
         constraints = [models.CheckConstraint(condition=Q(remaining_qty__gte=0), name="layer_remaining_non_negative")]
 
 
+class CountRootCause(models.TextChoices):
+    """Structured root-cause codes for stock count variances that cross the approval threshold --
+    mirrors billing.ReturnReason so a large, otherwise-unexplained inventory adjustment is
+    reportable and policeable, not just a free-text afterthought. Required only once the variance
+    reaches the same ApprovalRule threshold that triggers approval (see inventory.services.apply_count);
+    small routine counts can still use a plain free-text `reason`."""
+    COUNTING_ERROR = "counting_error", "Counting / data-entry error"
+    THEFT_SHRINKAGE = "theft_shrinkage", "Theft or shrinkage"
+    DAMAGE_BREAKAGE = "damage_breakage", "Damage or breakage"
+    RECEIVING_ERROR = "receiving_error", "Receiving error (wrong quantity booked in)"
+    SYSTEM_ERROR = "system_error", "System / posting error"
+    EXPIRY_WASTE = "expiry_waste", "Expiry or waste"
+    OTHER = "other", "Other (explain in notes)"
+
+
 @audited
 class InventoryCount(CompanyScoped):
     """A physical count of `product` at `warehouse`. Large adjustments (per an ApprovalRule for
-    document_type='inventory_count') must be approved before the system books the variance -- see
-    inventory.services.apply_count. Small/no-rule adjustments are applied immediately, same as before."""
+    document_type='inventory_count') must be approved before the system books the variance, and
+    must carry a structured root_cause_code -- see inventory.services.apply_count. Small/no-rule
+    adjustments are applied immediately, same as before.
+
+    Each count is one product at one warehouse: the approval/root-cause check below is always
+    computed from this row's own abs(diff_qty)*cost alone. Nothing nets a surplus on one product
+    against a shortage on another -- there is no multi-row/bulk count submission in the API or
+    frontend (StockOpSerializer/StockOp take a single product+warehouse per call), so two counts
+    can never be combined into a single approval decision."""
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, related_name="counts")
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="counts")
     date = models.DateField()
@@ -296,6 +318,8 @@ class InventoryCount(CompanyScoped):
     unit_cost = models.DecimalField(max_digits=20, decimal_places=6, null=True, blank=True,
                                      help_text="Gains only; empty = current average cost")
     reason = models.CharField(max_length=200, blank=True)
+    root_cause_code = models.CharField(max_length=24, choices=CountRootCause.choices, blank=True,
+                                        help_text="Mandatory once the variance crosses the approval threshold")
     state = models.CharField(max_length=10, default="draft", choices=[
         ("draft", "Draft"), ("to_approve", "Waiting approval"), ("approved", "Approved"), ("done", "Done"),
         ("cancelled", "Cancelled")])
