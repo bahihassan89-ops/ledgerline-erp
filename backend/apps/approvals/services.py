@@ -127,3 +127,62 @@ def decide(req, user, approve: bool, comment=""):
     else:
         _notify_pending_step(req, company_id)
     return req
+
+
+def approval_matrix(company):
+    """Item #65 -- reconcile the ApprovalRule threshold table against the Role approval-limit
+    table for this company, so misconfiguration (a step nobody can ever clear) is surfaced
+    instead of silently discovered later when a real document gets stuck.
+
+    For each active rule and each level in its approver_levels, a step is only ever clearable if
+    some active role at that company has role.level >= level, holds approvals.request.decide, and
+    (if the role's approval_limit is set) that limit is >= the rule's min_amount -- a lower limit
+    means the role could never approve an amount that actually triggers this rule, since decide()
+    rejects req.amount > limit and req.amount is always >= rule.min_amount by construction of
+    find_rule(). Separately flags a rule whose min_amount is 0 (always matches) alongside another
+    active rule for the same document_type with a lower level requirement and a HIGHER min_amount
+    -- that ordering would mean a bigger document needs a lower level than a smaller one, which is
+    almost certainly a data-entry mistake in the rule table rather than intentional design.
+    """
+    from apps.iam.models import Role
+
+    roles = list(Role.objects.filter(company=company, active=True))
+    issues = []
+    for rule in ApprovalRule.objects.filter(company=company, active=True).order_by("document_type", "min_amount"):
+        rule_issues = []
+        for level in rule.approver_levels:
+            eligible = [r for r in roles if r.level >= level and "approvals.request.decide" in r.permissions]
+            if not eligible:
+                rule_issues.append({
+                    "code": "no_eligible_role", "level": level,
+                    "detail": f"No active role at level {level}+ holds approvals.request.decide."})
+                continue
+            capped = [r for r in eligible if r.approval_limit is not None]
+            if capped and all(r.approval_limit < rule.min_amount for r in capped) and len(capped) == len(eligible):
+                best = max(r.approval_limit for r in capped)
+                rule_issues.append({
+                    "code": "limit_too_low", "level": level,
+                    "detail": (f"Every role at level {level}+ that can decide approvals has an approval_limit "
+                               f"below this rule's min_amount ({best} < {rule.min_amount}); this step can never "
+                               "be cleared for an amount that actually triggers this rule.")})
+        if rule_issues:
+            issues.append({"rule": rule, "issues": rule_issues})
+    # Cross-rule sanity check: within the same document_type, a higher min_amount should never
+    # require a lower minimum level than a lower min_amount (bigger documents needing less
+    # oversight than smaller ones is almost always a mistake).
+    by_doc = {}
+    for rule in ApprovalRule.objects.filter(company=company, active=True):
+        by_doc.setdefault(rule.document_type, []).append(rule)
+    cross_rule_issues = []
+    for doc_type, rules in by_doc.items():
+        rules = sorted(rules, key=lambda r: r.min_amount)
+        for lo, hi in zip(rules, rules[1:]):
+            lo_min_level = min(lo.approver_levels) if lo.approver_levels else 0
+            hi_min_level = min(hi.approver_levels) if hi.approver_levels else 0
+            if hi.min_amount > lo.min_amount and hi_min_level < lo_min_level:
+                cross_rule_issues.append({
+                    "document_type": doc_type, "lower_rule": lo, "higher_rule": hi,
+                    "detail": (f"'{hi.name}' (min_amount={hi.min_amount}) requires a lower level "
+                               f"({hi_min_level}) than '{lo.name}' (min_amount={lo.min_amount}, "
+                               f"level {lo_min_level}) for the same document type.")})
+    return {"rule_issues": issues, "cross_rule_issues": cross_rule_issues}

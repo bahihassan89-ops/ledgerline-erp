@@ -11,8 +11,27 @@ from .serializers import ApprovalRequestSerializer, ApprovalRuleSerializer
 class ApprovalRuleViewSet(CompanyViewSet):
     queryset = ApprovalRule.objects.all()
     serializer_class = ApprovalRuleSerializer
-    perms = {"list": "approvals.request.view", "*": "approvals.rule.manage"}
+    perms = {"list": "approvals.request.view", "matrix": "approvals.rule.manage", "*": "approvals.rule.manage"}
     pagination_class = None
+
+    @action(detail=False, methods=["get"])
+    def matrix(self, request):
+        """Item #65 -- consistency report between ApprovalRule thresholds and Role approval
+        limits/levels for this company. Read-only; fixing a flagged issue means editing the
+        relevant Role or ApprovalRule, there's nothing to "apply" here."""
+        result = services.approval_matrix(self.company)
+        return Response({
+            "rule_issues": [
+                {"rule": ApprovalRuleSerializer(ri["rule"]).data, "issues": ri["issues"]}
+                for ri in result["rule_issues"]
+            ],
+            "cross_rule_issues": [
+                {"document_type": ci["document_type"], "detail": ci["detail"],
+                 "lower_rule": ApprovalRuleSerializer(ci["lower_rule"]).data,
+                 "higher_rule": ApprovalRuleSerializer(ci["higher_rule"]).data}
+                for ci in result["cross_rule_issues"]
+            ],
+        })
 
 
 class ApprovalRequestViewSet(CompanyReadOnlyViewSet):

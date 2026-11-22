@@ -359,6 +359,58 @@ def test_approval_limit(env):
     assert billing.post_invoice(Invoice.objects.get(pk=bill.pk), env.accountant).state == "posted"
 
 
+def test_approval_matrix_clean_out_of_the_box(env):
+    # Item #65: the default rule/role tables that setup_company() creates for every new company
+    # must themselves be internally consistent -- no rule whose approver level has no eligible
+    # role, no rule whose eligible roles are all capped below its own threshold, and no pair of
+    # same-document-type rules where the bigger amount demands a *lower* level than the smaller one.
+    result = approvals.approval_matrix(env.c)
+    assert result["rule_issues"] == []
+    assert result["cross_rule_issues"] == []
+
+
+def test_approval_matrix_flags_level_with_no_eligible_role(env):
+    from apps.approvals.models import ApprovalRule
+    from apps.iam.models import Role
+    # Knock out every role that could ever decide a level-4+ step, then add a rule that requires one.
+    Role.objects.filter(company=env.c, level__gte=4).update(active=False)
+    rule = ApprovalRule.objects.create(company=env.c, name="orphaned rule", document_type="journal_entry",
+                                       min_amount=1, approver_levels=[4])
+    result = approvals.approval_matrix(env.c)
+    hit = next(ri for ri in result["rule_issues"] if ri["rule"].pk == rule.pk)
+    assert hit["issues"] == [{"code": "no_eligible_role", "level": 4,
+                              "detail": "No active role at level 4+ holds approvals.request.decide."}]
+
+
+def test_approval_matrix_flags_limit_below_rule_threshold(env):
+    from apps.approvals.models import ApprovalRule
+    from apps.iam.models import Role
+    # Cap every level-4+ role's approval limit well below a rule's own min_amount -- nobody who
+    # could reach this step could ever actually clear it once a document hits that amount.
+    Role.objects.filter(company=env.c, level__gte=4).update(approval_limit=1000)
+    rule = ApprovalRule.objects.create(company=env.c, name="underfunded rule", document_type="journal_entry",
+                                       min_amount=5000, approver_levels=[4])
+    result = approvals.approval_matrix(env.c)
+    hit = next(ri for ri in result["rule_issues"] if ri["rule"].pk == rule.pk)
+    assert len(hit["issues"]) == 1
+    assert hit["issues"][0]["code"] == "limit_too_low"
+    assert hit["issues"][0]["level"] == 4
+    assert "1000.00 < 5000.00" in hit["issues"][0]["detail"]
+
+
+def test_approval_matrix_flags_inverted_cross_rule_levels(env):
+    from apps.approvals.models import ApprovalRule
+    # A bigger document (100,000, needs level 4, from setup_company()) should never require a
+    # *lower* level than a smaller one for the same document type.
+    small_rule = ApprovalRule.objects.create(company=env.c, name="small journal, high bar",
+                                             document_type="journal_entry", min_amount=10,
+                                             approver_levels=[5])
+    result = approvals.approval_matrix(env.c)
+    hit = next(ci for ci in result["cross_rule_issues"]
+              if ci["document_type"] == "journal_entry" and ci["lower_rule"].pk == small_rule.pk)
+    assert hit["higher_rule"].name == "Large manual journal → Controller"
+
+
 def test_create_refund_requires_reason_code(env):
     # Item #32: returns reached 5.8% of sales in one company (21% in a single month at its peak,
     # per the FC review) -- a reason has to be mandatory and structured, not an optional free-text
